@@ -1,0 +1,1 @@
+"""CLI — `hippo` command."""

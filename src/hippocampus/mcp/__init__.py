@@ -1,0 +1,1 @@
+"""Hippocampus MCP server (stdio)."""

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hippocampus.archive</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HIPPO_BIN__</string>
+        <string>archive</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>86400</integer>  <!-- every 24 hours -->
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HIPPO_LOG_DIR__/daemon-archive.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HIPPO_LOG_DIR__/daemon-archive.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HIPPOCAMPUS_HOME</key>
+        <string>__HIPPO_HOME__</string>
+        <key>HIPPOCAMPUS_VAULT</key>
+        <string>__HIPPO_VAULT__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

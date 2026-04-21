@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Hippocampus UserPromptSubmit hook.
+#
+# Stdin: JSON with at least {"prompt": "<user message>"}.
+# Stdout: {} (no context injection) or a hookSpecificOutput block.
+#
+# Side effect: logs the ask to the working-memory ledger so the AI does
+# not have to call log_progress(kind="ask", ...) manually.
+#
+# Never blocks the turn — any internal error degrades to "{}".
+
+set -uo pipefail
+
+CLIENT="${1:-devin}"
+HIPPO_BIN="__HIPPO_BIN__"
+
+INPUT_JSON="$(cat || true)"
+
+if [[ -n "$INPUT_JSON" && -x "$HIPPO_BIN" ]]; then
+    PROMPT=$(python3 -c '
+import json, sys
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data = {}
+prompt = (data.get("prompt") or "").strip()
+# Cap content to a sensible size (ledger entries are single-line-ish).
+if prompt:
+    print(prompt[:500])
+' <<< "$INPUT_JSON" 2>/dev/null || true)
+
+    if [[ -n "$PROMPT" ]]; then
+        HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" progress log ask "$PROMPT" --client "$CLIENT" >/dev/null 2>&1 || true
+    fi
+fi
+
+# Empty response: no additional context injected per-turn. The SessionStart
+# hook already sets up the protocol; we don't want to spam every turn.
+echo "{}"
