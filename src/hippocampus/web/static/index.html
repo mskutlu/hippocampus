@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Hippocampus</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --pin: #e3b341;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px;
+    background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .5px; }
+  header small { color: var(--muted); }
+  nav {
+    display: flex; gap: 4px; padding: 0 24px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  nav button {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 12px 18px;
+    cursor: pointer;
+    font-size: 14px;
+    border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  main { padding: 24px; max-width: 1200px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .panel h2 { margin: 0 0 12px 0; font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .stat { font-size: 24px; font-weight: 600; }
+  .stat small { font-size: 12px; color: var(--muted); display: block; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+  code, .mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+  .pinned { color: var(--pin); }
+  button.act, input[type=text], input[type=number], textarea, select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font: inherit;
+  }
+  button.act { cursor: pointer; }
+  button.act:hover { border-color: var(--accent); color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  textarea { width: 100%; resize: vertical; min-height: 80px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex-shrink: 0; }
+  .row input[type=text] { flex-grow: 1; min-width: 100px; }
+  .tag { display: inline-block; padding: 2px 6px; margin: 0 4px 4px 0; border: 1px solid var(--border); border-radius: 3px; font-size: 11px; color: var(--muted); }
+  .confidence-bar { background: var(--border); height: 4px; border-radius: 2px; overflow: hidden; }
+  .confidence-bar > span { display: block; height: 100%; background: var(--good); }
+  .hit-score { font-size: 11px; color: var(--muted); }
+  #drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 92vw;
+    background: var(--panel); border-left: 1px solid var(--border);
+    padding: 24px; overflow-y: auto;
+    transform: translateX(100%); transition: transform .2s ease;
+  }
+  #drawer.open { transform: translateX(0); }
+  #drawer h3 { margin: 0 0 12px 0; }
+  .kind-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  .kind-goal { background: #1f6feb; color: #fff; }
+  .kind-ask { background: #3fb950; color: #0e1116; }
+  .kind-done { background: #8957e5; color: #fff; }
+  .kind-decision { background: #d29922; color: #0e1116; }
+  .kind-blocker { background: #f85149; color: #fff; }
+  .kind-next { background: #58a6ff; color: #0e1116; }
+  .kind-note { background: #30363d; color: #e6edf3; }
+  .spinner { display: none; color: var(--muted); font-size: 12px; }
+  .spinner.on { display: inline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Hippocampus</h1>
+  <small id="host"></small>
+  <span style="margin-left:auto"><span class="spinner" id="spin">loading…</span></span>
+</header>
+<nav>
+  <button data-tab="dashboard" class="active">Dashboard</button>
+  <button data-tab="fragments">Fragments</button>
+  <button data-tab="working">Working</button>
+  <button data-tab="feedback">Feedback</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+<main>
+  <section id="tab-dashboard">
+    <div class="panel">
+      <h2>Stats</h2>
+      <div class="grid" id="stats-grid"></div>
+    </div>
+    <div class="panel">
+      <h2>Top-N (auto-injected)</h2>
+      <table id="top-table"><thead><tr><th>conf</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Recall (hybrid FTS + semantic)</h2>
+      <div class="row">
+        <input type="text" id="recall-q" placeholder="semantic query..." />
+        <input type="number" id="recall-n" value="5" min="1" max="50" style="width:70px" />
+        <button class="act" onclick="runRecall()">Recall</button>
+      </div>
+      <div id="recall-out" style="margin-top:12px;"></div>
+    </div>
+  </section>
+
+  <section id="tab-fragments" hidden>
+    <div class="panel">
+      <h2>Add fragment</h2>
+      <textarea id="new-content" placeholder="Synthesized fragment content..."></textarea>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="new-summary" placeholder="one-line summary (optional)" />
+        <input type="text" id="new-tags" placeholder="comma-separated tags" />
+        <label><input type="checkbox" id="new-pin" /> pin</label>
+        <button class="act" onclick="createFragment()">Remember</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Fragments</h2>
+      <div class="row">
+        <input type="text" id="frag-tag" placeholder="tag filter" />
+        <input type="number" id="frag-min" step="0.05" value="0" min="0" max="1" style="width:80px" />
+        <button class="act" onclick="loadFragments()">Refresh</button>
+      </div>
+      <table id="frag-table" style="margin-top:12px;"><thead><tr><th>conf</th><th>acc</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-working" hidden>
+    <div class="panel">
+      <h2>Current ledger</h2>
+      <div class="row">
+        <input type="text" id="wm-client" value="devin" style="width:160px" />
+        <button class="act" onclick="loadProgress()">Refresh</button>
+        <button class="act" onclick="undoProgress()">Undo last</button>
+        <button class="act danger" onclick="endProgress(false)">End session</button>
+        <button class="act" onclick="endProgress(true)">End + distill</button>
+      </div>
+      <div id="wm-out" style="margin-top:12px;"></div>
+    </div>
+    <div class="panel">
+      <h2>Log entry</h2>
+      <div class="row">
+        <select id="log-kind">
+          <option>ask</option><option>done</option><option>decision</option>
+          <option>blocker</option><option>next</option><option>goal</option><option>note</option>
+        </select>
+        <input type="text" id="log-content" placeholder="one-line content" />
+        <button class="act" onclick="logProgress()">Log</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-feedback" hidden>
+    <div class="panel">
+      <h2>Recent feedback events</h2>
+      <table id="fb-table"><thead><tr><th>time</th><th>kind</th><th>delta</th><th>fragment</th><th>reason</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <div class="panel">
+      <h2>Settings</h2>
+      <form id="cfg-form"></form>
+    </div>
+    <div class="panel">
+      <h2>Embeddings</h2>
+      <div id="emb-stats"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="act" onclick="reindex(false)">Reindex missing</button>
+        <button class="act" onclick="reindex(true)">Force re-embed all</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<aside id="drawer">
+  <button class="act" onclick="closeDrawer()" style="float:right">Close</button>
+  <div id="drawer-body"></div>
+</aside>
+
+<script>
+let TOKEN = null;
+async function getToken() {
+  if (TOKEN) return TOKEN;
+  const r = await fetch('/api/csrf'); const j = await r.json();
+  TOKEN = j.token; return TOKEN;
+}
+async function api(path, { method = 'GET', body = null } = {}) {
+  spin(true);
+  const headers = { 'Content-Type': 'application/json' };
+  if (method !== 'GET') headers['X-Hippo-Token'] = await getToken();
+  const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null });
+  spin(false);
+  if (!r.ok) { const t = await r.text(); throw new Error(t); }
+  return r.json();
+}
+function spin(on) { document.getElementById('spin').classList.toggle('on', on); }
+
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    ['dashboard', 'fragments', 'working', 'feedback', 'settings'].forEach(t => {
+      document.getElementById(`tab-${t}`).hidden = t !== tab;
+    });
+    if (tab === 'fragments') loadFragments();
+    if (tab === 'working') loadProgress();
+    if (tab === 'feedback') loadFeedback();
+    if (tab === 'settings') loadSettings();
+    if (tab === 'dashboard') loadDashboard();
+  });
+});
+
+function renderFragmentCell(f) {
+  const tags = (f.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
+  const pin = f.pinned ? '<span class="pinned">📌</span>' : '';
+  return { tags, pin };
+}
+
+async function loadDashboard() {
+  const stats = await api('/api/stats');
+  const grid = document.getElementById('stats-grid');
+  grid.innerHTML = [
+    `<div class="panel" style="margin:0"><div class="stat">${stats.total_fragments}<small>fragments</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">${stats.pinned_fragments}<small>pinned</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">${stats.average_confidence?.toFixed?.(3) ?? '—'}<small>avg confidence</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">+${stats.boost_delta}<small>boost delta</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">-${stats.decay_delta}<small>decay / cycle</small></div></div>`,
+  ].join('');
+
+  const top = await api('/api/top');
+  const tbody = document.querySelector('#top-table tbody');
+  tbody.innerHTML = top.fragments.map(f => {
+    const { tags, pin } = renderFragmentCell(f);
+    return `<tr onclick="openFragment('${f.id}')" style="cursor:pointer">
+      <td>${f.confidence.toFixed(2)}</td>
+      <td>${escapeHtml(f.summary || f.content.slice(0,80))}</td>
+      <td>${tags}</td>
+      <td>${pin}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function runRecall() {
+  const q = document.getElementById('recall-q').value;
+  const n = parseInt(document.getElementById('recall-n').value, 10) || 5;
+  if (!q) return;
+  const res = await api('/api/recall', { method: 'POST', body: { query: q, limit: n } });
+  const out = document.getElementById('recall-out');
+  if (res.count === 0) { out.innerHTML = '<em>no hits</em>'; return; }
+  out.innerHTML = `<div class="mono">semantic_weight=${res.semantic_weight}, semantic_available=${res.semantic_available}</div>
+    <table style="margin-top:8px"><thead><tr><th>fts</th><th>sem</th><th>conf</th><th>summary</th></tr></thead><tbody>${
+    res.fragments.map(f => `<tr onclick="openFragment('${f.id}')" style="cursor:pointer">
+      <td class="hit-score">${f.scores?.fts ?? '—'}</td>
+      <td class="hit-score">${f.scores?.semantic ?? '—'}</td>
+      <td>${f.confidence.toFixed(2)}</td>
+      <td>${escapeHtml(f.summary || f.content.slice(0,120))}</td>
+    </tr>`).join('')
+  }</tbody></table>`;
+}
+
+async function loadFragments() {
+  const tag = document.getElementById('frag-tag').value || null;
+  const mc = parseFloat(document.getElementById('frag-min').value) || 0;
+  const res = await api(`/api/fragments?tag=${encodeURIComponent(tag || '')}&min_confidence=${mc}&limit=200`);
+  const tbody = document.querySelector('#frag-table tbody');
+  tbody.innerHTML = res.fragments.map(f => {
+    const { tags, pin } = renderFragmentCell(f);
+    return `<tr onclick="openFragment('${f.id}')" style="cursor:pointer">
+      <td>${f.confidence.toFixed(2)}</td>
+      <td>${f.accessed}</td>
+      <td>${escapeHtml(f.summary || f.content.slice(0,80))}</td>
+      <td>${tags}</td>
+      <td>${pin}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5"><em>no fragments</em></td></tr>';
+}
+
+async function createFragment() {
+  const content = document.getElementById('new-content').value.trim();
+  if (!content) return;
+  const summary = document.getElementById('new-summary').value.trim() || null;
+  const tags = (document.getElementById('new-tags').value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const pinned = document.getElementById('new-pin').checked;
+  await api('/api/fragments', { method: 'POST', body: { content, summary, tags, pinned } });
+  ['new-content','new-summary','new-tags'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('new-pin').checked = false;
+  await loadFragments();
+}
+
+async function openFragment(id) {
+  const res = await api(`/api/fragments/${id}`);
+  const f = res.fragment;
+  const assoc = await api(`/api/associations/${id}`);
+  const tags = (f.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
+  const assocRows = assoc.associations.map(a => `<tr><td class="mono">${a.other}</td><td>${a.weight.toFixed(1)}</td><td>${a.co_accessed_count}</td></tr>`).join('') || '<tr><td colspan="3"><em>none</em></td></tr>';
+  document.getElementById('drawer-body').innerHTML = `
+    <h3>${escapeHtml(f.summary)}</h3>
+    <p class="mono">${f.id}</p>
+    <p>${tags} ${f.pinned ? '<span class="pinned">📌 pinned</span>' : ''}</p>
+    <div><strong>conf</strong> ${f.confidence.toFixed(3)} · <strong>acc</strong> ${f.accessed} · <strong>last</strong> ${f.last_accessed_at || '—'}</div>
+    <hr style="margin:12px 0; border-color:var(--border)" />
+    <pre style="white-space:pre-wrap">${escapeHtml(f.content)}</pre>
+    <hr style="margin:12px 0; border-color:var(--border)" />
+    <div class="row">
+      <button class="act" onclick="togglePin('${f.id}', ${!f.pinned})">${f.pinned ? 'Unpin' : 'Pin'}</button>
+      <button class="act" onclick="doForget('${f.id}')">Forget</button>
+      <button class="act danger" onclick="doDelete('${f.id}')">Delete</button>
+    </div>
+    <h4 style="margin-top:16px">Associations</h4>
+    <table><thead><tr><th>other</th><th>weight</th><th>co-accessed</th></tr></thead><tbody>${assocRows}</tbody></table>
+  `;
+  document.getElementById('drawer').classList.add('open');
+}
+function closeDrawer() { document.getElementById('drawer').classList.remove('open'); }
+async function togglePin(id, pin) { await api(`/api/fragments/${id}/${pin ? 'pin' : 'unpin'}`, { method: 'POST' }); openFragment(id); loadDashboard(); }
+async function doForget(id) { await api(`/api/fragments/${id}/forget`, { method: 'POST', body: { reason: 'via web UI' } }); openFragment(id); }
+async function doDelete(id) { if (!confirm('Delete this fragment permanently?')) return; await api(`/api/fragments/${id}`, { method: 'DELETE' }); closeDrawer(); loadFragments(); loadDashboard(); }
+
+async function loadProgress() {
+  const client = document.getElementById('wm-client').value || 'devin';
+  const res = await api(`/api/progress?client=${encodeURIComponent(client)}`);
+  const out = document.getElementById('wm-out');
+  if (!res.session_id) { out.innerHTML = '<em>no active session — first log entry will start one</em>'; return; }
+  out.innerHTML = `<div class="mono">session: ${res.session_id}</div>
+    <table style="margin-top:8px"><thead><tr><th>turn</th><th>kind</th><th>content</th><th>time</th></tr></thead><tbody>${
+    res.entries.map(e => `<tr><td>${e.turn_index}</td><td><span class="kind-badge kind-${e.kind}">${e.kind}</span></td><td>${escapeHtml(e.content)}</td><td class="mono">${(e.created_at || '').slice(11,19)}</td></tr>`).join('')
+  }</tbody></table>`;
+}
+async function logProgress() {
+  const kind = document.getElementById('log-kind').value;
+  const content = document.getElementById('log-content').value.trim();
+  const client = document.getElementById('wm-client').value || 'devin';
+  if (!content) return;
+  await api('/api/progress', { method: 'POST', body: { kind, content, client } });
+  document.getElementById('log-content').value = '';
+  loadProgress();
+}
+async function undoProgress() {
+  const client = document.getElementById('wm-client').value || 'devin';
+  await api('/api/progress/undo', { method: 'POST', body: { client } });
+  loadProgress();
+}
+async function endProgress(distill) {
+  const client = document.getElementById('wm-client').value || 'devin';
+  let summary = null;
+  if (distill) { summary = prompt('Session summary?', ''); if (summary === null) return; }
+  await api('/api/progress/end', { method: 'POST', body: { client, distill, summary } });
+  loadProgress();
+  loadDashboard();
+}
+
+async function loadFeedback() {
+  const res = await api('/api/feedback?limit=100');
+  document.querySelector('#fb-table tbody').innerHTML = res.events.map(e => `<tr>
+    <td class="mono">${(e.created_at || '').slice(11,19)}</td>
+    <td><span class="kind-badge kind-${e.kind === 'negative' ? 'blocker' : e.kind === 'boost' ? 'ask' : 'note'}">${e.kind}</span></td>
+    <td>${e.delta ?? ''}</td>
+    <td class="mono">${e.fragment_id}</td>
+    <td>${escapeHtml(e.reason || '')}</td>
+  </tr>`).join('') || '<tr><td colspan="5"><em>no events</em></td></tr>';
+}
+
+async function loadSettings() {
+  const cfg = await api('/api/config');
+  const emb = await api('/api/embeddings/stats');
+  const form = document.getElementById('cfg-form');
+  form.innerHTML = Object.entries(cfg.settings).map(([k, v]) => `
+    <div class="row" style="margin-bottom:8px">
+      <label style="width:200px">${k}</label>
+      <input type="text" value="${v === null ? '' : v}" data-key="${k}" />
+      <button class="act" onclick="saveSetting('${k}')">Save</button>
+    </div>
+  `).join('') + `<div class="mono" style="margin-top:8px">${cfg.path}</div>`;
+  document.getElementById('emb-stats').innerHTML = `
+    <div>Embedded: <strong>${emb.embedded}/${emb.total_fragments}</strong> (${(emb.coverage * 100).toFixed(1)}%)</div>
+    <div>Model: <code>${emb.model || '—'}</code> · dim=${emb.dim || '—'} · provider=${emb.provider_available ? 'available' : '<span class="pinned">unavailable</span>'}</div>
+  `;
+}
+async function saveSetting(key) {
+  const v = document.querySelector(`[data-key="${key}"]`).value;
+  let parsed = v;
+  try { parsed = JSON.parse(v); } catch(_) {}
+  if (v === '') parsed = null;
+  await api('/api/config', { method: 'POST', body: { key, value: parsed } });
+  loadSettings();
+}
+async function reindex(force) {
+  const res = await api('/api/embeddings/reindex', { method: 'POST', body: { force } });
+  alert(JSON.stringify(res, null, 2));
+  loadSettings();
+}
+
+function escapeHtml(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+document.getElementById('host').textContent = location.host;
+getToken().then(loadDashboard).then(() => {
+  setInterval(() => {
+    const activeTab = document.querySelector('nav button.active').dataset.tab;
+    if (activeTab === 'dashboard') loadDashboard();
+    else if (activeTab === 'working') loadProgress();
+  }, 30000);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Hippocampus SessionStart hook for Devin-for-Terminal / Claude Code.
+#
+# Stdin: JSON from the client (ignored — event data not needed).
+# Stdout: JSON object with hookSpecificOutput.additionalContext injected
+#         into the model's context on session start.
+#
+# Exits 0 on success; any internal error degrades to "{}" so the session
+# is never blocked by a broken hook.
+#
+# Resolves the client name from argv[1] (installed with explicit label).
+
+set -uo pipefail
+
+CLIENT="${1:-devin}"
+HIPPO_BIN="__HIPPO_BIN__"
+
+# Best-effort: open/rotate a session for this client so `hippo progress show`
+# reflects reality from turn 0.
+if [[ -x "$HIPPO_BIN" ]]; then
+    HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" session start --client "$CLIENT" >/dev/null 2>&1 || true
+fi
+
+CONTEXT=$(cat <<'EOF'
+## Hippocampus memory is ACTIVE for this session.
+
+You have access to MCP tools for both long-term and working memory. Follow
+this protocol reflexively — the user should never have to ask you to use it:
+
+Working memory (short-term, per session):
+- After **every** user message, call log_progress(kind="ask", content="<one-line paraphrase>") if it has not been auto-logged.
+- After **every** completed action, call log_progress(kind="done", content="<what you did>").
+- On decisions: log_progress(kind="decision", content="<decision>").
+- On blockers: log_progress(kind="blocker", content="<blocker>").
+- On planned next steps: log_progress(kind="next", content="<next>").
+- Call get_progress() if you need more detail than the WORKING block shows.
+
+Long-term memory (cross-session, cross-client):
+- Before answering anything domain-specific, call recall(query="...") to pull relevant fragments. Each recall boosts confidence on the hits.
+- When you learn something durable, call remember(content=..., summary=..., tags=[...], pinned=<bool>).
+- When a recalled fragment is wrong, call forget(fragment_id=..., reason=...).
+- At task completion, call end_progress(distill_to_fragment=true, summary="...") to rotate the session and condense the ledger into a long-term fragment.
+
+The top-N long-term fragments and the live working ledger are injected in
+your rules file under the HIPPOCAMPUS blocks. Re-read them whenever you need
+context; they update in real time as you call log_progress.
+EOF
+)
+
+python3 -c '
+import json, sys, os
+ctx = sys.stdin.read()
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": ctx,
+    },
+    "additionalContext": ctx,
+}))
+' <<< "$CONTEXT"

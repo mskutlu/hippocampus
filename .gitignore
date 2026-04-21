@@ -1,0 +1,142 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+
+# Virtualenv
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# uv / poetry / pip caches
+.uv/
+.pdm-build/
+.ruff_cache/
+.mypy_cache/
+.pytype/
+
+# ---------------------------------------------------------------------------
+# Testing / coverage
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.nox/
+.hypothesis/
+
+# ---------------------------------------------------------------------------
+# Editor / OS
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Runtime state — NEVER commit
+# ---------------------------------------------------------------------------
+# Hippocampus runtime home (DB, logs, backups, sessions, model cache)
+.hippocampus/
+hippocampus-data/
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Obsidian mirrors / vaults (contain user's synthesized fragments)
+devin-vault/
+hippocampus-vault/
+Fragments/
+.archive/
+
+# Logs
+*.log
+logs/
+
+# Backup copies we write before mutating user files
+*.bak
+*.pre-hippocampus.bak
+*.pre-hippo-hooks.bak
+*.*.pre-hippocampus.bak
+*.*.pre-hippo-hooks.bak
+
+# ---------------------------------------------------------------------------
+# Models / caches (large, per-user)
+# ---------------------------------------------------------------------------
+models/
+.cache/
+.huggingface/
+
+# ---------------------------------------------------------------------------
+# Secrets & credentials — NEVER commit
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.cer
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.token
+api_keys*
+.netrc
+
+# AWS / GCP / Azure credentials accidentally placed in a repo
+.aws/
+.gcp/
+.azure/
+service-account*.json
+
+# ---------------------------------------------------------------------------
+# Local config overrides (may contain host-specific paths / tokens)
+# ---------------------------------------------------------------------------
+.devin/config.local.json
+.claude/settings.local.json
+.claude.local.json
+.windsurf/local_*.md
+config.local.*
+*.local.json
+
+# ---------------------------------------------------------------------------
+# Bench / tuning artifacts the user might drop into the repo
+# ---------------------------------------------------------------------------
+queries.jsonl
+queries-*.jsonl
+bench-results*.json
+bench-*.json
+*.bench.json
+
+
+# JetBrains / VSCode history plugins
+.history/
+.yandex/
