@@ -36,40 +36,133 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Optional distillation** on `end_progress` turns the ledger into one
   long-term fragment.
 
-## Quickstart
+---
+
+## Install
+
+### Prerequisites
+
+| Requirement | Why | Install |
+|---|---|---|
+| **macOS** | The decay / inject / archive daemons use `launchd`. CLI and MCP server work on Linux and Windows too, but the timed background jobs need manual cron/systemd setup. | — |
+| **Python 3.11+** | Runtime. | macOS: `brew install python@3.12` |
+| **uv** | Package manager used by the install script. | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| **git** | To clone. | macOS: `xcode-select --install` |
+
+### Clone and install
 
 ```bash
-# 1. Install
-cd ~/IdeaProjects/hippocampus
+# Clone anywhere you like — the install script resolves its own repo path.
+git clone https://github.com/mskutlu/hippocampus.git
+cd hippocampus
+
+# Install (idempotent — safe to re-run)
 bash scripts/install.sh
-
-# 2. Optional extras for semantic recall + web UI
-uv pip install -e '.[semantic,web]'
-hippo reindex          # embed existing fragments
-hippo web              # start the local dashboard at http://127.0.0.1:7878
-
-# 3. Verify
-hippo doctor     # expect: long:✓ working:✓ mcp:✓ for every client
-                 #         embeddings: N/N covered
-                 #         settings: working_block_mode=per_client ...
-
-# 4. Long-term memory
-hippo remember -c "Kafka retries need idempotent consumers." -s "kafka idempotency" -t kafka
-hippo recall "kafka"           # hybrid FTS + semantic
-hippo top --limit 10
-
-# 5. Working memory — use during an actual task
-hippo progress log goal     "Ship V1.2 web UI"
-hippo progress log ask      "User asked about semantic recall"
-hippo progress log done     "Wrote migration 003"
-hippo progress log decision "Use fastembed for local embeddings"
-hippo progress show
-
-# 6. Session wrap — optionally distill to long-term
-hippo progress end --distill --summary "Shipped V1.2 web UI"
 ```
 
-The AI clients will see both blocks automatically in their next session.
+The installer:
+1. Runs `uv sync` to create `.venv/` inside the repo and installs the `hippo` CLI there.
+2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
+3. Installs `launchd` agents: hourly decay, 10-minute inject, daily archive.
+4. Registers the Hippocampus MCP server in every detected AI client's config
+   (Devin, Claude Code, OpenCode, Windsurf, Antigravity).
+5. Writes the first injection block into each client's rules file. Before
+   mutating any pre-existing file, it drops a one-time
+   `<path>.pre-hippocampus.bak` copy so your original state is recoverable.
+6. Runs `hippo doctor` and reports status.
+
+Add `~/.hippocampus/bin` or the cloned repo's `.venv/bin` to your `PATH` if
+you want to invoke `hippo` from anywhere (or use `uv run hippo …` from
+inside the repo).
+
+### Optional extras
+
+Run these from inside the cloned repo:
+
+```bash
+# Semantic recall (local ONNX embeddings, ~130 MB model download)
+uv pip install -e '.[semantic]'
+hippo reindex          # embed existing fragments
+hippo recall "some query"
+
+# Web dashboard at http://127.0.0.1:7878
+uv pip install -e '.[web]'
+hippo web
+
+# Heavy embedders (BGE-large, mxbai-embed-large, e5-large, stella, …)
+# Pulls sentence-transformers + torch (~2 GB). MPS auto-detected on Apple Silicon.
+uv pip install -e '.[heavy]'
+hippo embeddings bench \
+  --provider sentence-transformers \
+  --models "BAAI/bge-small-en-v1.5,intfloat/e5-large-v2" \
+  --queries my-queries.jsonl
+```
+
+### Auto-trigger in Devin + Claude Code
+
+```bash
+hippo install-hooks     # registers SessionStart + UserPromptSubmit hooks
+```
+
+This is the difference between "the AI might use memory if prompted" and
+"the AI sees the protocol on turn 0 and every user message is auto-logged
+as an `ask` before the AI even reads it." After installing hooks, **restart
+your AI client** so it reloads its config.
+
+### Verify
+
+```bash
+hippo doctor
+```
+
+Expected output:
+
+```
+OK  SQLite OK … fragments
+OK  Vault mirror OK …
+OK  Injection file OK …
+OK  Devin CLI      long:✓ working:✓ mcp:✓
+OK  Claude Code    long:✓ working:✓ mcp:✓
+OK  OpenCode       long:✓ working:✓ mcp:✓
+OK  Windsurf       long:✓ working:✓ mcp:✓
+OK  Antigravity    long:✓ working:✓ mcp:✓
+OK  launchd plist OK
+OK  settings: working_block_mode=per_client …
+OK  embeddings: N/N covered (model=…, dim=…)    # only if [semantic] installed
+OK  hooks/devin       SessionStart:✓ UserPromptSubmit:✓   # only if you ran hippo install-hooks
+OK  hooks/claude-code SessionStart:✓ UserPromptSubmit:✓
+```
+
+---
+
+## Usage
+
+```bash
+# Long-term memory
+hippo remember -c "Kafka retries need idempotent consumers." -s "kafka idempotency" -t kafka
+hippo recall "kafka"
+hippo top --limit 10
+hippo pin   frag_01H...
+hippo forget frag_01H...
+
+# Working memory (if hooks installed, asks are auto-logged — you only do dones/decisions manually)
+hippo progress log goal     "Ship the feature"
+hippo progress log done     "Wrote the migration"
+hippo progress log decision "Use a single-writer consumer"
+hippo progress show --client devin
+hippo progress end --distill --summary "Shipped it"
+
+# Admin
+hippo stats
+hippo list --tag kafka
+hippo decay --dry-run
+hippo archive --dry-run
+hippo inject --commit
+```
+
+Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
+
+---
 
 ## Architecture
 
@@ -81,17 +174,18 @@ The AI clients will see both blocks automatically in their next session.
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Hippocampus MCP Server (Python, 12 tools)                    │
-│   long-term: recall, remember, forget, pin, unpin,           │
-│              get_fragment, list_fragments, top_fragments,    │
+│ Hippocampus MCP Server (Python, 13 tools)                    │
+│   long-term: recall · remember · forget · pin · unpin ·      │
+│              get_fragment · list_fragments · top_fragments · │
 │              get_stats                                       │
-│   working:   log_progress, get_progress, end_progress        │
+│   working:   log_progress · get_progress · end_progress ·    │
+│              undo_last_entry                                 │
 └───────────┬──────────────────────────────┬───────────────────┘
             │                              │
             ▼                              ▼
 ┌──────────────────────────┐   ┌───────────────────────────────┐
 │ SQLite (canonical)       │ ←→│ Obsidian mirror (markdown)    │
-│ ~/.hippocampus/          │   │ ~/hippocampus-vault/Fragments/*.md  │
+│ ~/.hippocampus/          │   │ ~/hippocampus-vault/Fragments/│
 │   hippocampus.db         │   │   .archive/*.md               │
 └───────────┬──────────────┘   └───────────────────────────────┘
             ▲
@@ -127,23 +221,45 @@ The AI clients will see both blocks automatically in their next session.
 └──────────────────────────────────────────────────────────────┘
 ```
 
+---
+
 ## Design docs
 
-- `plans/v1/prd-hippocampus-v1.md` — long-term memory PRD
-- `plans/v1/tasks-hippocampus-v1.md` — V1 task breakdown
-- `plans/v2/prd-working-memory.md` — working-memory PRD
-- `plans/v2/tasks-working-memory.md` — V0.2 task breakdown
-- `docs/ARCHITECTURE.md` — data flow, schema, injection pipeline, 12-tool surface
-- `docs/RUNBOOK.md` — operations, backup/restore, debugging, working-memory recipes
+- `plans/v1/` — long-term memory foundation (PRD + tasks)
+- `plans/v2/` — working-memory ledger
+- `plans/v3/` — working-memory iterations (shared block, auto-tag, undo, idle auto-end)
+- `plans/v4/` — semantic recall (fastembed + hybrid)
+- `plans/v5/` — web UI
+- `plans/v6/` — sentence-transformers provider + bench
+- `plans/v7/` — auto-trigger via lifecycle hooks
+- `docs/ARCHITECTURE.md` — data flow, schema, injection pipeline
+- `docs/RUNBOOK.md` — operations, backup/restore, debugging
 - `CHANGELOG.md` — versioned changes
+
+---
 
 ## Uninstall
 
 ```bash
-bash scripts/uninstall.sh           # removes launchd + marker blocks + MCP registrations
-rm -rf ~/.hippocampus               # also drop the DB + logs
-rm -rf ~/hippocampus-vault/Fragments      # and the Obsidian mirror
+# From inside the cloned repo:
+bash scripts/uninstall.sh        # removes launchd agents, MCP registrations, and marker blocks
+
+# Also drop your data (irreversible — consider backing up ~/.hippocampus first):
+rm -rf ~/.hippocampus
+rm -rf ~/hippocampus-vault/Fragments
 ```
 
-Every rules file we touched was backed up to `<path>.pre-hippocampus.bak` on
-first mutation, so the original state is always recoverable.
+Every rules file we touched was backed up once to `<path>.pre-hippocampus.bak`
+on first mutation. Restore any of them with `cp <path>.pre-hippocampus.bak <path>`
+if you ever want to revert to the original state.
+
+---
+
+## License
+
+Not yet specified — add one before using publicly.
+
+## Contributing
+
+PRs welcome. Run `uv run pytest tests -q` before pushing; the suite should
+stay green (79/79 at last count).
