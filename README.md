@@ -257,7 +257,7 @@ if you ever want to revert to the original state.
 
 ## License
 
-Not yet specified — add one before using publicly.
+[MIT](./LICENSE) © msk
 
 ## Contributing
 
