@@ -10,6 +10,8 @@ continue.dev, Zed, ...) by appending one line.
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,7 +25,7 @@ class ClientSpec:
     rules_path: Path                # file receiving the injection block
     creation_header: str            # header used when creating a fresh rules file
     mcp_config_path: Path | None    # where to register the MCP server (optional)
-    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json'
+    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json'
 
     @property
     def exists(self) -> bool:
@@ -31,6 +33,29 @@ class ClientSpec:
 
 
 HOME = Path.home()
+
+
+def _vscode_user_dir() -> Path:
+    if sys.platform == "darwin":
+        return HOME / "Library" / "Application Support" / "Code" / "User"
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "Code" / "User"
+        return HOME / "AppData" / "Roaming" / "Code" / "User"
+    return HOME / ".config" / "Code" / "User"
+
+
+_VSCODE_COPILOT_HEADER = """---
+name: Hippocampus Memory
+description: Always-on long-term and working memory injected by Hippocampus for VS Code Copilot.
+applyTo: "**"
+---
+
+# Hippocampus Memory for VS Code Copilot
+
+This file is managed by Hippocampus. The marker blocks below are regenerated automatically.
+"""
 
 CLIENTS: list[ClientSpec] = [
     ClientSpec(
@@ -72,6 +97,14 @@ CLIENTS: list[ClientSpec] = [
         creation_header="# Antigravity Global Rules",
         mcp_config_path=HOME / ".antigravity" / "mcp_config.json",
         mcp_config_format="windsurf-mcp",
+    ),
+    ClientSpec(
+        name="vscode-copilot",
+        label="VS Code Copilot",
+        rules_path=HOME / ".copilot" / "instructions" / "hippocampus.instructions.md",
+        creation_header=_VSCODE_COPILOT_HEADER,
+        mcp_config_path=_vscode_user_dir() / "mcp.json",
+        mcp_config_format="vscode-mcp-json",
     ),
 ]
 

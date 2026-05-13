@@ -69,6 +69,27 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _server_bucket(data: dict, fmt: str) -> dict[str, Any] | None:
+    if fmt == "vscode-mcp-json":
+        data.setdefault("servers", {})
+        return data["servers"]
+    if fmt in ("devin-json", "claude-json", "windsurf-mcp", "opencode-json"):
+        data.setdefault("mcpServers", {})
+        return data["mcpServers"]
+    return None
+
+
+def is_registered(spec: ClientSpec) -> bool:
+    path = spec.mcp_config_path
+    if path is None or not path.exists():
+        return False
+    data = _load_json(path)
+    bucket = _server_bucket(data, spec.mcp_config_format)
+    if bucket is None:
+        return False
+    return MCP_ENTRY_NAME in bucket
+
+
 def register(spec: ClientSpec) -> tuple[bool, str]:
     """Register the Hippocampus MCP server in one client's config.
 
@@ -84,24 +105,26 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
     _ensure_dir(path)
     data = _load_json(path)
 
-    if fmt in ("devin-json", "claude-json", "windsurf-mcp", "opencode-json"):
-        # All four use the same mcpServers schema at the top level.
-        data.setdefault("mcpServers", {})
-        existing = data["mcpServers"].get(MCP_ENTRY_NAME)
-        # env is passed through by every client's MCP transport; the server
-        # reads HIPPOCAMPUS_CLIENT to correctly scope session tracking.
-        new_entry = {
-            "command": cmd["command"],
-            "args": cmd["args"],
-            "env": {"HIPPOCAMPUS_CLIENT": spec.name},
-        }
-        if existing == new_entry:
-            return False, f"{spec.name}: already registered at {path}"
-        data["mcpServers"][MCP_ENTRY_NAME] = new_entry
-        _write_json(path, data)
-        return True, f"{spec.name}: registered at {path}"
+    bucket = _server_bucket(data, fmt)
+    if bucket is None:
+        return False, f"{spec.name}: unknown mcp_config_format {fmt!r}"
 
-    return False, f"{spec.name}: unknown mcp_config_format {fmt!r}"
+    # env is passed through by every client's MCP transport; the server reads
+    # HIPPOCAMPUS_CLIENT to correctly scope session tracking.
+    new_entry = {
+        "command": cmd["command"],
+        "args": cmd["args"],
+        "env": {"HIPPOCAMPUS_CLIENT": spec.name},
+    }
+    if fmt == "vscode-mcp-json":
+        new_entry = {"type": "stdio", **new_entry}
+
+    existing = bucket.get(MCP_ENTRY_NAME)
+    if existing == new_entry:
+        return False, f"{spec.name}: already registered at {path}"
+    bucket[MCP_ENTRY_NAME] = new_entry
+    _write_json(path, data)
+    return True, f"{spec.name}: registered at {path}"
 
 
 def unregister(spec: ClientSpec) -> tuple[bool, str]:
@@ -109,11 +132,12 @@ def unregister(spec: ClientSpec) -> tuple[bool, str]:
     if path is None or not path.exists():
         return False, f"{spec.name}: no config to clean"
     data = _load_json(path)
-    servers = data.get("mcpServers", {})
+    servers = _server_bucket(data, spec.mcp_config_format)
+    if servers is None:
+        return False, f"{spec.name}: unknown mcp_config_format {spec.mcp_config_format!r}"
     if MCP_ENTRY_NAME not in servers:
         return False, f"{spec.name}: entry not present"
     servers.pop(MCP_ENTRY_NAME, None)
-    data["mcpServers"] = servers
     _write_json(path, data)
     return True, f"{spec.name}: removed from {path}"
 
