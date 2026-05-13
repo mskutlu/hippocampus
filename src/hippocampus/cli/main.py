@@ -74,6 +74,7 @@ def doctor() -> None:
     """Health check across DB, vault, clients, and daemon."""
     _bootstrap()
 
+    from hippocampus.clients import mcp_config as mcp_cfg
     from hippocampus.clients.registry import CLIENTS
     from hippocampus.storage import fragments as F
 
@@ -107,13 +108,7 @@ def doctor() -> None:
         rules_text = spec.rules_path.read_text(encoding="utf-8") if spec.rules_path.exists() else ""
         long_ok = config.INJECTION_MARKER_START in rules_text
         working_ok = config.WORKING_MARKER_START in rules_text
-        mcp_ok = False
-        if spec.mcp_config_path and spec.mcp_config_path.exists():
-            try:
-                data = json.loads(spec.mcp_config_path.read_text(encoding="utf-8"))
-                mcp_ok = "hippocampus" in data.get("mcpServers", {})
-            except Exception:  # noqa: BLE001
-                mcp_ok = False
+        mcp_ok = mcp_cfg.is_registered(spec)
         badge_long = "✓" if long_ok else "✗"
         badge_work = "✓" if working_ok else "✗"
         badge_mcp = "✓" if mcp_ok else "✗"
