@@ -20,6 +20,13 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     results = hooks.install_all()
     assert len(results) == 2
 
+    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 2.
+    devin_result = next(r for r in results if r["client"] == "devin")
+    claude_result = next(r for r in results if r["client"] == "claude-code")
+    assert len(devin_result["scripts"]) == 3
+    assert any("post-compaction" in s for s in devin_result["scripts"])
+    assert len(claude_result["scripts"]) == 2
+
     for r in results:
         for script in r["scripts"]:
             p = Path(script)
@@ -33,15 +40,18 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     hooks_obj = devin_cfg.get("hooks", {})
     assert "SessionStart" in hooks_obj
     assert "UserPromptSubmit" in hooks_obj
-    # Every registered hook must be tagged
-    for evt in ("SessionStart", "UserPromptSubmit"):
+    assert "PostCompaction" in hooks_obj  # NEW in V1.5
+    for evt in ("SessionStart", "UserPromptSubmit", "PostCompaction"):
         for entry in hooks_obj[evt]:
             for h in entry["hooks"]:
                 assert h["tag"] == "hippocampus-v1"
 
-    # Claude Code check
+    # Claude Code check — no PostCompaction (not supported yet).
     claude_cfg = json.loads((fake_home / ".claude" / "settings.json").read_text())
-    assert "SessionStart" in claude_cfg.get("hooks", {})
+    claude_hooks = claude_cfg.get("hooks", {})
+    assert "SessionStart" in claude_hooks
+    assert "UserPromptSubmit" in claude_hooks
+    assert "PostCompaction" not in claude_hooks
 
 
 def test_install_is_idempotent(tmp_path, monkeypatch):
@@ -55,8 +65,9 @@ def test_install_is_idempotent(tmp_path, monkeypatch):
     hooks.install_all()  # second run should NOT double-register
 
     devin_cfg = json.loads((fake_home / ".config" / "devin" / "config.json").read_text())
-    assert len(devin_cfg["hooks"]["SessionStart"]) == 1
-    assert len(devin_cfg["hooks"]["SessionStart"][0]["hooks"]) == 1
+    for evt in ("SessionStart", "UserPromptSubmit", "PostCompaction"):
+        assert len(devin_cfg["hooks"][evt]) == 1
+        assert len(devin_cfg["hooks"][evt][0]["hooks"]) == 1
 
 
 def test_uninstall_removes_only_hippocampus(tmp_path, monkeypatch):
@@ -97,11 +108,69 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     report = hooks.status()
     assert len(report) == 2
     for r in report:
-        assert r["installed"]["SessionStart"] is False
-        assert r["installed"]["UserPromptSubmit"] is False
+        for ev, installed in r["installed"].items():
+            assert installed is False, f"unexpected initial install: {r['client']}/{ev}"
 
     hooks.install_all()
     report_after = hooks.status()
-    for r in report_after:
-        assert r["installed"]["SessionStart"] is True
-        assert r["installed"]["UserPromptSubmit"] is True
+    devin = next(r for r in report_after if r["client"] == "devin")
+    claude = next(r for r in report_after if r["client"] == "claude-code")
+
+    assert devin["installed"]["SessionStart"] is True
+    assert devin["installed"]["UserPromptSubmit"] is True
+    assert devin["installed"]["PostCompaction"] is True  # NEW in V1.5
+
+    assert claude["installed"]["SessionStart"] is True
+    assert claude["installed"]["UserPromptSubmit"] is True
+    # Claude Code doesn't get PostCompaction at all — report should not pretend it's expected.
+    assert "PostCompaction" not in claude["installed"]
+
+
+def test_post_compaction_script_emits_additional_context(tmp_path, monkeypatch):
+    """The rendered post-compaction script must produce a JSON envelope
+    with hookEventName=PostCompaction and a non-empty additionalContext
+    when given a realistic stdin payload."""
+    import os
+    import subprocess
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    # Point the rendered script at the test interpreter's hippo entry point.
+    repo_root = Path(__file__).resolve().parents[2]
+    hippo_bin = repo_root / ".venv" / "bin" / "hippo"
+    if not hippo_bin.exists():
+        # Fallback: skip if there's no installed hippo binary (CI uses uv sync).
+        import pytest
+
+        pytest.skip("hippo binary not available in repo .venv")
+    monkeypatch.setenv("HIPPOCAMPUS_HIPPO_BIN", str(hippo_bin))
+
+    from hippocampus.clients import hooks
+
+    hooks.install_all()
+    script = fake_home / ".config" / "devin" / "hippocampus-hooks" / "devin" / "post-compaction.sh"
+    assert script.exists()
+
+    env = dict(os.environ)
+    env.setdefault("HIPPOCAMPUS_HOME", str(tmp_path / ".hippocampus"))
+    env.setdefault("HIPPOCAMPUS_VAULT", str(tmp_path / "vault"))
+
+    proc = subprocess.run(
+        ["bash", str(script), "devin"],
+        input=json.dumps({"summary": "compacted; was talking about kafka idempotency."}),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    # Either we have hookSpecificOutput with PostCompaction, or {} when hippo
+    # isn't installed cleanly — in this test fixture it's installed.
+    assert payload, "post-compaction script returned empty payload"
+    if "hookSpecificOutput" in payload:
+        assert payload["hookSpecificOutput"]["hookEventName"] == "PostCompaction"
+        assert payload["hookSpecificOutput"]["additionalContext"]

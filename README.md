@@ -141,12 +141,20 @@ hippo embeddings bench \
 ### Auto-trigger in Devin + Claude Code
 
 ```bash
-hippo install-hooks     # registers SessionStart + UserPromptSubmit hooks
+hippo install-hooks     # registers lifecycle hooks
 ```
 
-This is the difference between "the AI might use memory if prompted" and "the AI sees the protocol on turn 0 and every user message is auto-logged as an `ask` before the AI even reads it." After installing hooks, **restart your AI client** so it reloads its config.
+| Hook | Devin | Claude Code | What it does (v1.5+) |
+|---|---|---|---|
+| `SessionStart` | ✓ | ✓ | Opens a Hippocampus session and injects the memory protocol **+ the live working ledger + top long-term fragments** as `additionalContext`. The AI sees real state from turn 0 instead of whatever the rules file happened to hold. |
+| `UserPromptSubmit` | ✓ | ✓ | Logs the user prompt as `kind="ask"` AND re-injects the live working block + top fragments matching the prompt. This is the universal compaction-safety mechanism — the next user message after a compaction always carries a fresh snapshot. |
+| `PostCompaction` | ✓ | — | Devin-only. Runs `hippo inject` to refresh the rules file, then injects the live context as `additionalContext`. Claude Code's `PostCompact` event doesn't accept `additionalContext` yet (community issues open); coverage on Claude Code comes from `UserPromptSubmit` instead. |
+
+Before 1.5.0 the WORKING block was kept up-to-date on disk but the AI client only re-read the rules file at session start, so after a compaction the model was looking at a stale snapshot. Re-run `hippo install-hooks` after upgrading to pick up the new behaviour, and **restart your AI client** so it reloads its config.
 
 Hook auto-install works on macOS, Linux, and WSL (the hooks are bash scripts). Native Windows users need to translate them into PowerShell or run Devin inside WSL.
+
+Token cost is bounded: each hook payload is capped at `hook_inject_budget_chars` (default 3500 chars ≈ 800 tokens). Adjust or disable per layer with `hippo config set hook_inject_working false` / `hook_inject_fragments false` / `hook_fragment_limit 3` / `hook_inject_budget_chars 2000`.
 
 ### Verify
 
@@ -169,7 +177,7 @@ OK  VS Code Copilot long:✓ working:✓ mcp:✓
 OK  launchd plist OK                              # macOS only
 OK  settings: working_block_mode=per_client …
 OK  embeddings: N/N covered (model=…, dim=…)      # only if [semantic] installed
-OK  hooks/devin       SessionStart:✓ UserPromptSubmit:✓   # only if you ran hippo install-hooks
+OK  hooks/devin       SessionStart:✓ UserPromptSubmit:✓ PostCompaction:✓  # only if you ran hippo install-hooks
 OK  hooks/claude-code SessionStart:✓ UserPromptSubmit:✓
 ```
 
@@ -274,6 +282,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 - `plans/v5/` — web UI
 - `plans/v6/` — sentence-transformers provider + bench
 - `plans/v7/` — auto-trigger via lifecycle hooks
+- `plans/v8/` — compaction-safe context re-injection + sqlite-vec roadmap
 - `docs/ARCHITECTURE.md` — data flow, schema, injection pipeline
 - `docs/RUNBOOK.md` — operations, backup/restore, debugging
 - `CHANGELOG.md` — versioned changes
@@ -304,4 +313,4 @@ if you ever want to revert to the original state.
 ## Contributing
 
 PRs welcome. Run `uv run pytest tests -q` before pushing; the suite should
-stay green (79/79 at last count).
+stay green (87/87 at last count).
