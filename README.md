@@ -1,7 +1,7 @@
 # Hippocampus
 
 > Shared biologically-inspired long-term **and** short-term memory for AI assistants.
-> One backend, auto-injected into Devin, Claude Code, OpenCode, Windsurf, and Antigravity.
+> One backend, auto-injected into Devin, Claude Code, OpenCode, Windsurf, Antigravity, and VS Code Copilot.
 
 The human brain does not record everything — it synthesizes, distills, and leaves behind fragments.
 Frequently accessed knowledge grows stronger; unused knowledge fades and is forgotten.
@@ -85,8 +85,8 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
 1. Runs `uv sync` and installs the `hippo` CLI into a repo-local `.venv/`.
 2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
 3. Installs periodic jobs **on macOS only** (launchd agents: hourly decay, 10-minute inject, daily archive). On Linux / WSL it prints the `crontab -e` lines to paste. On Windows-native it points you at Task Scheduler.
-4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, OpenCode, Windsurf, Antigravity).
-5. Writes the first injection block into each client's rules file. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
+4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, OpenCode, Windsurf, Antigravity, VS Code Copilot).
+5. Writes the first injection block into each client's rules file. For VS Code Copilot this is `~/.copilot/instructions/hippocampus.instructions.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
 ### Linux / WSL — setting up cron
@@ -165,6 +165,7 @@ OK  Claude Code    long:✓ working:✓ mcp:✓
 OK  OpenCode       long:✓ working:✓ mcp:✓
 OK  Windsurf       long:✓ working:✓ mcp:✓
 OK  Antigravity    long:✓ working:✓ mcp:✓
+OK  VS Code Copilot long:✓ working:✓ mcp:✓
 OK  launchd plist OK                              # macOS only
 OK  settings: working_block_mode=per_client …
 OK  embeddings: N/N covered (model=…, dim=…)      # only if [semantic] installed
@@ -209,6 +210,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 ┌──────────────────────────────────────────────────────────────┐
 │ AI Clients (via MCP stdio)                                   │
 │  Devin · Claude Code · OpenCode · Windsurf · Antigravity     │
+│  · VS Code Copilot                                           │
 └───────────────────────┬──────────────────────────────────────┘
                         │
                         ▼
@@ -255,6 +257,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 │   ~/.config/opencode/AGENTS.md                               │
 │   ~/.codeium/windsurf/memories/global_rules.md               │
 │   ~/.antigravity/rules/global_rules.md                       │
+│   ~/.copilot/instructions/hippocampus.instructions.md        │
 │                                                              │
 │ Each file is backed up once to <path>.pre-hippocampus.bak.   │
 └──────────────────────────────────────────────────────────────┘
