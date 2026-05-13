@@ -90,9 +90,21 @@ def _backup(path: Path) -> Path | None:
 HOOK_TAG = "hippocampus-v1"  # used to tag our hook entries for clean removal
 
 
-def _build_claude_format_entries(client: str, start_path: Path, submit_path: Path) -> dict[str, Any]:
-    """Return a dict shaped like the Claude-Code hooks schema for the two events."""
-    return {
+def _build_claude_format_entries(
+    client: str,
+    start_path: Path,
+    submit_path: Path,
+    *,
+    post_compaction_path: Path | None = None,
+) -> dict[str, Any]:
+    """Return a dict shaped like the Claude-Code hooks schema for our events.
+
+    SessionStart + UserPromptSubmit are universal. PostCompaction is only
+    wired for clients that accept `additionalContext` from compaction
+    events (currently Devin; Claude Code rejects this output for
+    PreCompact/PostCompact events as of 2026-05).
+    """
+    entries: dict[str, Any] = {
         "SessionStart": [
             {
                 "matcher": "",
@@ -100,7 +112,7 @@ def _build_claude_format_entries(client: str, start_path: Path, submit_path: Pat
                     {
                         "type": "command",
                         "command": f"bash {start_path} {client}",
-                        "timeout": 5,
+                        "timeout": 10,
                         "tag": HOOK_TAG,
                     }
                 ],
@@ -113,13 +125,28 @@ def _build_claude_format_entries(client: str, start_path: Path, submit_path: Pat
                     {
                         "type": "command",
                         "command": f"bash {submit_path} {client}",
-                        "timeout": 5,
+                        "timeout": 10,
                         "tag": HOOK_TAG,
                     }
                 ],
             }
         ],
     }
+    if post_compaction_path is not None:
+        entries["PostCompaction"] = [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"bash {post_compaction_path} {client}",
+                        "timeout": 15,
+                        "tag": HOOK_TAG,
+                    }
+                ],
+            }
+        ]
+    return entries
 
 
 def _merge_hooks(existing: dict, new_entries: dict) -> dict:
@@ -158,22 +185,42 @@ def _strip_hooks(existing: dict) -> dict:
 
 
 def install_for_devin() -> dict[str, Any]:
-    """Install hooks into ~/.config/devin/config.json."""
+    """Install hooks into ~/.config/devin/config.json.
+
+    Devin gets SessionStart + UserPromptSubmit + PostCompaction. Devin's
+    PostCompaction event accepts `additionalContext` so we use it to
+    re-inject the live working ledger after compaction completes.
+    """
     client = "devin"
     hooks_dir = _install_dir_for(client)
     start_path = _render_script("session-start", client, hooks_dir / "session-start.sh")
     submit_path = _render_script("user-prompt-submit", client, hooks_dir / "user-prompt-submit.sh")
+    post_path = _render_script("post-compaction", client, hooks_dir / "post-compaction.sh")
 
     cfg_path = Path.home() / ".config" / "devin" / "config.json"
     _backup(cfg_path)
     cfg = _load_json(cfg_path)
-    cfg["hooks"] = _merge_hooks(cfg.get("hooks", {}), _build_claude_format_entries(client, start_path, submit_path))
+    cfg["hooks"] = _merge_hooks(
+        cfg.get("hooks", {}),
+        _build_claude_format_entries(client, start_path, submit_path, post_compaction_path=post_path),
+    )
     _write_json(cfg_path, cfg)
-    return {"client": client, "config": str(cfg_path), "scripts": [str(start_path), str(submit_path)]}
+    return {
+        "client": client,
+        "config": str(cfg_path),
+        "scripts": [str(start_path), str(submit_path), str(post_path)],
+    }
 
 
 def install_for_claude_code() -> dict[str, Any]:
-    """Install hooks into ~/.claude/settings.json (preferred) or ~/.claude.json."""
+    """Install hooks into ~/.claude/settings.json (preferred) or ~/.claude.json.
+
+    Claude Code gets SessionStart + UserPromptSubmit only. Its PreCompact /
+    PostCompact events do NOT support `additionalContext` (community
+    issues open as of 2026-05), so we rely on UserPromptSubmit to refresh
+    the model's view of the WORKING block on the message that follows a
+    compaction.
+    """
     client = "claude-code"
     hooks_dir = _install_dir_for(client)
     start_path = _render_script("session-start", client, hooks_dir / "session-start.sh")
@@ -210,17 +257,30 @@ def uninstall_all() -> list[dict[str, Any]]:
 
 
 def status() -> list[dict[str, Any]]:
-    """Return a report per client of whether hooks are installed."""
+    """Return a report per client of whether hooks are installed.
+
+    Devin reports SessionStart + UserPromptSubmit + PostCompaction.
+    Claude Code reports SessionStart + UserPromptSubmit only — its
+    PostCompact event doesn't accept our output type.
+    """
     reports: list[dict[str, Any]] = []
-    for client, cfg_path in (
-        ("devin", Path.home() / ".config" / "devin" / "config.json"),
-        ("claude-code", Path.home() / ".claude" / "settings.json"),
+    for client, cfg_path, expected_events in (
+        (
+            "devin",
+            Path.home() / ".config" / "devin" / "config.json",
+            ("SessionStart", "UserPromptSubmit", "PostCompaction"),
+        ),
+        (
+            "claude-code",
+            Path.home() / ".claude" / "settings.json",
+            ("SessionStart", "UserPromptSubmit"),
+        ),
     ):
         data = _load_json(cfg_path) if cfg_path.exists() else {}
         events = (data.get("hooks") or {})
         installed = {
             ev: any(_entry_is_ours(e) for e in events.get(ev, []))
-            for ev in ("SessionStart", "UserPromptSubmit")
+            for ev in expected_events
         }
         reports.append({"client": client, "config": str(cfg_path), "installed": installed})
     return reports

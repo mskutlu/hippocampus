@@ -152,11 +152,16 @@ def doctor() -> None:
     try:
         from hippocampus.clients.hooks import status as hooks_status
         for hs in hooks_status():
-            both = hs["installed"]
-            ss = "✓" if both.get("SessionStart") else "✗"
-            up = "✓" if both.get("UserPromptSubmit") else "✗"
-            line = f"hooks/{hs['client']:<11} SessionStart:{ss} UserPromptSubmit:{up}"
-            if both.get("SessionStart") and both.get("UserPromptSubmit"):
+            installed = hs["installed"]
+            parts = []
+            all_present = True
+            for ev in installed:
+                ok_glyph = "✓" if installed[ev] else "✗"
+                if not installed[ev]:
+                    all_present = False
+                parts.append(f"{ev}:{ok_glyph}")
+            line = f"hooks/{hs['client']:<11} " + " ".join(parts)
+            if all_present:
                 ok.append(line)
             else:
                 warn.append(line + "  (run `hippo install-hooks`)")
@@ -625,6 +630,47 @@ def embeddings_bench(models: str, provider: str, queries: Optional[Path]) -> Non
         queries_path=queries,
     )
     click.echo(json.dumps(result, indent=2))
+
+
+@cli.command("context")
+@click.option("--client", "-c", required=True, help="Client name (devin, claude-code, ...)")
+@click.option("--query", "-q", default=None, help="Recall query (e.g. the user prompt or compaction summary)")
+@click.option("--no-working", is_flag=True, help="Skip the live working ledger")
+@click.option("--no-fragments", is_flag=True, help="Skip the top long-term fragments")
+@click.option("--fragment-limit", type=int, default=None)
+@click.option("--budget", type=int, default=None, help="Char budget for the rendered payload")
+@click.option("--event", default=None, help="Hook event name for provenance (SessionStart, ...)")
+def context_cmd(
+    client: str,
+    query: Optional[str],
+    no_working: bool,
+    no_fragments: bool,
+    fragment_limit: Optional[int],
+    budget: Optional[int],
+    event: Optional[str],
+) -> None:
+    """Render a plain-markdown context payload for lifecycle hooks.
+
+    Emits the live working ledger + top long-term fragments, intended for
+    `hookSpecificOutput.additionalContext` in SessionStart / UserPromptSubmit
+    / PostCompaction hooks. Output is text, not JSON — the hook script wraps
+    it in the right JSON envelope per event.
+    """
+    os.environ["HIPPOCAMPUS_CLIENT"] = client
+    _bootstrap()
+    from hippocampus.clients import hook_context
+
+    settings = config.all_settings()
+    payload = hook_context.render_context(
+        client=client,
+        query=query,
+        include_working=(not no_working) and bool(settings.get("hook_inject_working", True)),
+        include_fragments=(not no_fragments) and bool(settings.get("hook_inject_fragments", True)),
+        fragment_limit=int(fragment_limit if fragment_limit is not None else settings.get("hook_fragment_limit", 5)),
+        char_budget=int(budget if budget is not None else settings.get("hook_inject_budget_chars", 3500)),
+        event_name=event,
+    )
+    sys.stdout.write(payload)
 
 
 @cli.command("install-hooks")

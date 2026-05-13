@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-05-13
+
+### Added — Compaction-safe context re-injection
+- **`hippo context` CLI** — renders the live working ledger + top long-term
+  fragments as a plain-markdown payload. Used by every lifecycle hook to
+  inject fresh state into the model's context on every relevant turn.
+  Flags: `--client`, `--query`, `--no-working`, `--no-fragments`,
+  `--fragment-limit`, `--budget`, `--event`.
+- **New module `clients/hook_context.py`** — single source of truth for the
+  rendered payload. Reuses the working-block grouping logic, talks to
+  `recall` / `top_fragments` for the long-term side, and enforces a
+  configurable char budget so hook output stays under Claude Code's
+  10 KB cap.
+- **PostCompaction hook (Devin)** — `hippo install-hooks` now also
+  registers a `PostCompaction` entry in `~/.config/devin/config.json`.
+  The script runs `hippo inject --commit --only devin` to refresh the
+  rules file and emits the live context payload as
+  `hookSpecificOutput.additionalContext`. Devin docs explicitly support
+  re-injecting context here.
+- **SessionStart hook upgrade** — in addition to the static protocol
+  text it now appends the live ledger + top fragments. New sessions
+  see the current state from turn 0 instead of whatever the rules file
+  happened to contain when it was loaded.
+- **UserPromptSubmit hook upgrade** — previously returned `{}` (no
+  context). Now logs the ask AND emits the live context payload as
+  `additionalContext`. This is the universal compaction-safety fix
+  that works on Devin AND Claude Code; on the next user message after
+  compaction, the AI sees a fresh WORKING block + top fragments
+  matching that very prompt.
+- **New settings** with safe defaults — all overridable via
+  `hippo config set <key> <value>` or `HIPPO_<KEY>` env:
+  - `hook_inject_working` (default `true`)
+  - `hook_inject_fragments` (default `true`)
+  - `hook_fragment_limit` (default `5`)
+  - `hook_inject_budget_chars` (default `3500`)
+- **`hippo doctor`** now reports the full set of hook events per
+  client; PostCompaction shows up for Devin, SessionStart +
+  UserPromptSubmit for Claude Code.
+- 8 new tests (7 unit for `hook_context`, 1 integration that runs the
+  rendered PostCompaction script end-to-end). Total: 87/87 green.
+
+### Why this matters
+Before 1.5.0, the WORKING block was being refreshed on disk on every
+`log_progress`, but the AI client only reads the rules file ONCE at
+session start. After a compaction (or simply on a new session), the
+AI's system prompt still carried the snapshot from when the session
+opened — usually the *previous* session's state. This silently
+defeated the V0.2 design goal "Survives compaction" stated in the
+PRD §G4.
+
+After 1.5.0:
+- Every user message refreshes the WORKING block in the model's
+  context via `UserPromptSubmit.additionalContext`.
+- Devin sessions additionally fire `PostCompaction.additionalContext`
+  surgically right after the compactor runs.
+- New sessions see the live ledger from turn 0 thanks to the
+  upgraded `SessionStart` payload.
+
+### Compatibility
+Re-run `hippo install-hooks` to pick up the new templates. Old
+installs keep working unchanged until you re-run the installer;
+script files are overwritten in place (idempotent by tag).
+
+### Vector storage roadmap
+V1.5 ships a documented plan in `plans/v8/prd-compaction-fix.md §5`
+for an optional `sqlite-vec` KNN backend. Bottom line: the current
+linear-scan cosine over SQLite BLOBs is fine for personal-scale
+corpora (<50k fragments). A backend abstraction + `sqlite-vec`
+implementation is planned for V1.6 once a real corpus motivates the
+switch.
+
 ## [1.4.1] - 2026-04-20
 
 ### Changed

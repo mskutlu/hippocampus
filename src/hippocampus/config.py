@@ -116,6 +116,11 @@ _DEFAULTS: dict[str, Any] = {
     "embedding_truncate_dim": None,       # Matryoshka truncation (int) or None
     "embedding_trust_remote_code": True,  # needed for stella / gte-Qwen2 / etc
     "semantic_weight": 0.5,                # 0.0 = FTS only, 1.0 = semantic only
+    # V8 — compaction-safe context re-injection via lifecycle hooks
+    "hook_inject_working": True,           # UserPromptSubmit / SessionStart / PostCompaction
+    "hook_inject_fragments": True,         # include top-N long-term fragments
+    "hook_fragment_limit": 5,              # max fragments per hook payload
+    "hook_inject_budget_chars": 3500,      # hard cap on hook additionalContext
 }
 
 

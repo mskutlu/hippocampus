@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Hippocampus PostCompaction hook for Devin-for-Terminal.
+#
+# Stdin: JSON with at least {"summary": "<compaction summary>"}.
+# Stdout: JSON with hookSpecificOutput.additionalContext containing the LIVE
+#         working ledger + top long-term memories most relevant to the
+#         compaction summary.
+#
+# Side effect: runs `hippo inject` to refresh the rules-file WORKING block
+# so the next time the file is read (e.g. on session resume) it reflects
+# reality. Never blocks the turn — any error degrades to "{}".
+#
+# Only installed for Devin. Claude Code's PreCompact/PostCompact events
+# do NOT support additionalContext yet (community issues open), so on
+# Claude Code we rely entirely on the UserPromptSubmit re-injection
+# triggered by the next user message.
+
+set -uo pipefail
+
+CLIENT="${1:-devin}"
+HIPPO_BIN="__HIPPO_BIN__"
+
+INPUT_JSON="$(cat || true)"
+
+SUMMARY=""
+if [[ -n "$INPUT_JSON" ]]; then
+    SUMMARY=$(python3 -c '
+import json, sys
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data = {}
+s = (data.get("summary") or "").strip()
+if s:
+    print(s[:2000])
+' <<< "$INPUT_JSON" 2>/dev/null || true)
+fi
+
+# Refresh the on-disk WORKING block + top-N block so the rules file is
+# fresh next time it is read.
+if [[ -x "$HIPPO_BIN" ]]; then
+    "$HIPPO_BIN" inject --commit --only "$CLIENT" >/dev/null 2>&1 || true
+fi
+
+CONTEXT=""
+if [[ -x "$HIPPO_BIN" ]]; then
+    if [[ -n "$SUMMARY" ]]; then
+        CONTEXT=$(HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" context --client "$CLIENT" --query "$SUMMARY" --event PostCompaction 2>/dev/null || true)
+    else
+        CONTEXT=$(HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" context --client "$CLIENT" --event PostCompaction 2>/dev/null || true)
+    fi
+fi
+
+if [[ -z "$CONTEXT" ]]; then
+    echo "{}"
+    exit 0
+fi
+
+python3 -c '
+import json, sys
+ctx = sys.stdin.read()
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PostCompaction",
+        "additionalContext": ctx,
+    },
+    "additionalContext": ctx,
+}))
+' <<< "$CONTEXT"

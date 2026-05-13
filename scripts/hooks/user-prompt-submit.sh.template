@@ -2,12 +2,19 @@
 # Hippocampus UserPromptSubmit hook.
 #
 # Stdin: JSON with at least {"prompt": "<user message>"}.
-# Stdout: {} (no context injection) or a hookSpecificOutput block.
+# Stdout: JSON with hookSpecificOutput.additionalContext containing the LIVE
+#         working ledger + top long-term memories.
 #
 # Side effect: logs the ask to the working-memory ledger so the AI does
 # not have to call log_progress(kind="ask", ...) manually.
 #
 # Never blocks the turn — any internal error degrades to "{}".
+#
+# V1.5+ behaviour: re-inject the working block on every user message as
+# additionalContext. This is the universal compaction-safety mechanism:
+# the rules file is loaded once at session start, so even when the AI
+# context is compacted, the very next user message refreshes the
+# WORKING block via this hook.
 
 set -uo pipefail
 
@@ -16,7 +23,8 @@ HIPPO_BIN="__HIPPO_BIN__"
 
 INPUT_JSON="$(cat || true)"
 
-if [[ -n "$INPUT_JSON" && -x "$HIPPO_BIN" ]]; then
+PROMPT=""
+if [[ -n "$INPUT_JSON" ]]; then
     PROMPT=$(python3 -c '
 import json, sys
 try:
@@ -28,12 +36,37 @@ prompt = (data.get("prompt") or "").strip()
 if prompt:
     print(prompt[:500])
 ' <<< "$INPUT_JSON" 2>/dev/null || true)
+fi
 
+# Side effect: log the ask BEFORE we render the context so the new ask is
+# visible in the live block we emit.
+if [[ -n "$PROMPT" && -x "$HIPPO_BIN" ]]; then
+    HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" progress log ask "$PROMPT" --client "$CLIENT" >/dev/null 2>&1 || true
+fi
+
+# Render the live snapshot — working ledger + top fragments matching the prompt.
+CONTEXT=""
+if [[ -x "$HIPPO_BIN" ]]; then
     if [[ -n "$PROMPT" ]]; then
-        HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" progress log ask "$PROMPT" --client "$CLIENT" >/dev/null 2>&1 || true
+        CONTEXT=$(HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" context --client "$CLIENT" --query "$PROMPT" --event UserPromptSubmit 2>/dev/null || true)
+    else
+        CONTEXT=$(HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" context --client "$CLIENT" --event UserPromptSubmit 2>/dev/null || true)
     fi
 fi
 
-# Empty response: no additional context injected per-turn. The SessionStart
-# hook already sets up the protocol; we don't want to spam every turn.
-echo "{}"
+if [[ -z "$CONTEXT" ]]; then
+    echo "{}"
+    exit 0
+fi
+
+python3 -c '
+import json, sys
+ctx = sys.stdin.read()
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": ctx,
+    },
+    "additionalContext": ctx,
+}))
+' <<< "$CONTEXT"

@@ -151,6 +151,21 @@ CLI, tests, and direct callers use the same code path as MCP clients.
 - The mirror writer is idempotent — concurrent writes to the same fragment
   race to produce the same bytes.
 
+## Injection vs. hooks (v1.5+)
+
+There are two independent paths that put Hippocampus state in front of
+the AI on each turn:
+
+| Path | What it carries | When it refreshes | Limitation |
+|---|---|---|---|
+| **Rules-file injection** (`hippo inject`) | Top-N fragments + WORKING block | every `log_progress`, every 10 min via cron/launchd | The client reads the rules file ONCE at session start; later edits are invisible to the AI until something forces a re-read. |
+| **Lifecycle hooks** (`hippo install-hooks`) | Live ledger + top fragments + protocol text | every `SessionStart`, every `UserPromptSubmit`, every Devin `PostCompaction` | Bounded by `hook_inject_budget_chars`. PostCompaction is Devin-only; Claude Code coverage is via `UserPromptSubmit`. |
+
+The hooks path is what makes the WORKING block compaction-safe. The
+rules-file path is still useful (it works when hooks aren't installed,
+and the top-N block lives there permanently for direct user reference)
+but should not be relied on alone for short-term memory.
+
 ## Extensibility
 
 Adding a new AI client (Cursor, Continue, Zed, …) is three steps:
