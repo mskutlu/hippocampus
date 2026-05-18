@@ -59,6 +59,16 @@ def boost(
         sessions.log_access(session_id, fragment_id)
 
     feedback.log(fragment_id, "boost", delta=config.BOOST_DELTA, reason=context_tag)
+
+    # v1.6.0 — zombie protection: auto-pin once a fragment has been accessed
+    # enough times that decay has clearly proven useless. Pinning halts decay
+    # so the knowledge stops disappearing despite being in active use.
+    if updated is not None and not updated.pinned:
+        threshold = int(config.get_setting("auto_pin_access_threshold") or 0)
+        if threshold > 0 and updated.accessed >= threshold:
+            updated = frag_store.update_fields(fragment_id, pinned=True) or updated
+            feedback.log(fragment_id, "auto-pin", reason="access-threshold")
+
     return updated
 
 
@@ -68,8 +78,14 @@ def boost_many(
     context_tag: str | None = None,
     session_id: str | None = None,
     client: str | None = None,
+    cluster_propagate: bool = False,
 ) -> list[frag_store.Fragment]:
-    """Boost every fragment in the list + strengthen all pairwise associations."""
+    """Boost every fragment in the list + strengthen all pairwise associations.
+
+    If `cluster_propagate=True`, also apply a smaller boost to each fragment's
+    first-degree neighbors via the associations graph (v1.6.0 C2). The neighbor
+    boost is `BOOST_DELTA * cluster_boost_factor` (default 0.33×).
+    """
     updated: list[frag_store.Fragment] = []
     for fid in fragment_ids:
         f = boost(fid, context_tag=context_tag, session_id=session_id, client=client)
@@ -77,7 +93,36 @@ def boost_many(
             updated.append(f)
     if len(fragment_ids) > 1:
         associations.strengthen_all(fragment_ids)
+
+    if cluster_propagate and updated:
+        factor = float(config.get_setting("cluster_boost_factor") or 0.0)
+        if factor > 0.0:
+            neighbor_delta = config.BOOST_DELTA * factor
+            seen: set[str] = {f.id for f in updated}
+            for f in updated:
+                for nb_id in associations.neighbors_of(f.id):
+                    if nb_id in seen:
+                        continue
+                    seen.add(nb_id)
+                    _small_boost(nb_id, neighbor_delta, context_tag=f"cluster:{f.id}")
     return updated
+
+
+def _small_boost(fragment_id: str, delta: float, *, context_tag: str | None = None) -> None:
+    """Apply a custom-delta boost (used for cluster propagation, smaller than BOOST_DELTA)."""
+    current = frag_store.get(fragment_id)
+    if current is None:
+        return
+    new_conf = min(config.CONFIDENCE_MAX, current.confidence + delta)
+    if new_conf == current.confidence:
+        return
+    frag_store.update_fields(
+        fragment_id,
+        confidence=new_conf,
+        last_accessed_at=_utc_now(),
+        below_threshold_since=None,
+    )
+    feedback.log(fragment_id, "boost", delta=delta, reason=context_tag)
 
 
 def apply_negative_feedback(

@@ -17,7 +17,8 @@ def test_config_defaults(hippo_env):
 
     s = config.all_settings()
     assert s["working_block_mode"] == "per_client"
-    assert s["auto_end_idle_minutes"] is None
+    # v1.6.0: auto_end_idle_minutes defaults to 60 (was None pre-1.6).
+    assert s["auto_end_idle_minutes"] == 60
 
 
 def test_config_set_persists(hippo_env):
@@ -146,9 +147,11 @@ def test_shared_mode_latest_session_picker(hippo_env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_auto_end_noop_when_disabled(hippo_env):
+def test_auto_end_noop_when_disabled(hippo_env, monkeypatch):
+    """Setting auto_end_idle_minutes=0 disables the feature."""
     from hippocampus.mcp import tools
 
+    monkeypatch.setenv("HIPPO_AUTO_END_IDLE_MINUTES", "0")
     out = tools.auto_end_idle_sessions()
     assert out["ended"] == 0
     assert out["reason"] == "disabled"

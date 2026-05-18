@@ -5,12 +5,19 @@ from __future__ import annotations
 import pytest
 
 
-def test_full_cycle_shield_then_decay_then_archive(hippo_env):
-    """Walk through the biological life of a fragment."""
+def test_full_cycle_shield_then_decay_then_archive(hippo_env, monkeypatch):
+    """Walk through the biological life of a fragment.
+
+    The recency shield (v1.6.0) protects fragments accessed in the last 30 days
+    from decay. This test isolates the *session-shield* behaviour, so we set
+    decay_skip_recent_days=0 to disable the recency shield.
+    """
     from hippocampus import config
     from hippocampus.dynamics import archive, decay
     from hippocampus.mcp import tools as T
     from hippocampus.storage import fragments as F, sessions
+
+    monkeypatch.setenv("HIPPO_DECAY_SKIP_RECENT_DAYS", "0")
 
     # 1. Remember
     res = T.remember(content="Kafka consumers must be idempotent.", summary="kafka")

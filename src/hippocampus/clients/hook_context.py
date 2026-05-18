@@ -99,31 +99,66 @@ def _working_section(client: str, *, content_max: int = 220) -> list[str]:
     return out
 
 
-def _fragment_section(query: str | None, *, limit: int) -> list[str]:
-    """Render top-N long-term fragments (query-driven if query, else ranked)."""
+def _fragment_section(
+    query: str | None,
+    *,
+    limit: int,
+    extra_query_streams: list[str] | None = None,
+) -> list[str]:
+    """Render top-N long-term fragments (query-driven if query, else ranked).
+
+    v1.6.0 (C1 — predictive recall): `extra_query_streams` is an optional list
+    of strings (typically the current session's last ask + last 3 dones) that
+    are also recalled and merged into the result set. Each stream contributes
+    1–2 hits if the explicit `query` doesn't already saturate the slot budget.
+    """
     try:
         from hippocampus.mcp import tools as T  # lazy import — keeps the
         # hook fast for users with semantic disabled
     except Exception:
         return []
 
-    fragments: list[dict] = []
+    fragments_by_id: dict[str, dict] = {}
+
+    def _add_hits(hits: list[dict]) -> None:
+        for h in hits:
+            fid = h.get("id")
+            if fid and fid not in fragments_by_id:
+                fragments_by_id[fid] = h
+
     if query and query.strip():
         try:
             recall_out = T.recall(query=query.strip(), limit=limit)
-            fragments = recall_out.get("fragments") or []
+            _add_hits(recall_out.get("fragments") or [])
         except Exception:
-            fragments = []
+            pass
 
-    if not fragments:
+    # Predictive recall — turn ledger context into additional query streams.
+    if extra_query_streams and len(fragments_by_id) < limit:
+        for stream in extra_query_streams:
+            if len(fragments_by_id) >= limit:
+                break
+            if not stream or not stream.strip():
+                continue
+            try:
+                stream_out = T.recall(query=stream.strip(), limit=2)
+            except Exception:
+                continue
+            _add_hits(stream_out.get("fragments") or [])
+
+    if not fragments_by_id:
         try:
             top_out = T.top_fragments(limit=limit)
-            fragments = top_out.get("fragments") or []
+            _add_hits(top_out.get("fragments") or [])
         except Exception:
-            fragments = []
+            pass
 
-    if not fragments:
+    if not fragments_by_id:
         return []
+
+    # Preserve insertion order (explicit query first, then ledger streams,
+    # then top-N) and respect the limit.
+    fragments = list(fragments_by_id.values())[:limit]
 
     header = (
         "## Top memories matching the latest prompt"
@@ -142,6 +177,34 @@ def _fragment_section(query: str | None, *, limit: int) -> list[str]:
     return out
 
 
+def _ledger_query_streams(client: str, *, max_streams: int = 4) -> list[str]:
+    """Pull the most recent ask + last 3 dones from the live ledger as extra
+    query streams. Used by `render_context` for predictive recall (v1.6.0 C1).
+    """
+    try:
+        sid = sessions.current_session_id(client, open_if_missing=False)
+    except (RuntimeError, Exception):
+        return []
+    entries = ledger_store.current_entries(sid)
+    if not entries:
+        return []
+    streams: list[str] = []
+    # Most recent ask first — it's the closest signal to user intent.
+    for e in reversed(entries):
+        if e.kind == "ask" and e.content:
+            streams.append(e.content)
+            break
+    # Then most recent 3 dones — they reveal what the AI was just doing.
+    done_count = 0
+    for e in reversed(entries):
+        if done_count >= 3:
+            break
+        if e.kind == "done" and e.content:
+            streams.append(e.content)
+            done_count += 1
+    return streams[:max_streams]
+
+
 def render_context(
     *,
     client: str,
@@ -151,12 +214,16 @@ def render_context(
     fragment_limit: int = 5,
     char_budget: int = 3500,
     event_name: str | None = None,
+    extra_query_streams: list[str] | None = None,
 ) -> str:
     """Plain-markdown payload for hookSpecificOutput.additionalContext.
 
     The payload always starts with a one-line provenance header so the AI
     can tell where the injection came from. Sections that would exceed
     `char_budget` are dropped (working block has priority over fragments).
+
+    v1.6.0: if `extra_query_streams` is None, the ledger's recent ask + dones
+    are used automatically (C1 predictive recall). Pass `[]` to disable.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     suffix = f" (event={event_name})" if event_name else ""
@@ -167,13 +234,17 @@ def render_context(
         "",
     ]
 
+    # Default predictive streams = the live ledger's recent ask + dones.
+    if extra_query_streams is None:
+        extra_query_streams = _ledger_query_streams(client)
+
     sections: list[list[str]] = []
     if include_working:
         sec = _working_section(client)
         if sec:
             sections.append(sec)
     if include_fragments:
-        sec = _fragment_section(query, limit=fragment_limit)
+        sec = _fragment_section(query, limit=fragment_limit, extra_query_streams=extra_query_streams)
         if sec:
             sections.append(sec)
 

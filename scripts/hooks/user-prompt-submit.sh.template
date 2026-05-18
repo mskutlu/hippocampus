@@ -24,7 +24,9 @@ HIPPO_BIN="__HIPPO_BIN__"
 INPUT_JSON="$(cat || true)"
 
 PROMPT=""
+FULL_PROMPT_FILE=""
 if [[ -n "$INPUT_JSON" ]]; then
+    # Capped 500-char version goes into the ledger as the ask.
     PROMPT=$(python3 -c '
 import json, sys
 try:
@@ -32,16 +34,35 @@ try:
 except Exception:
     data = {}
 prompt = (data.get("prompt") or "").strip()
-# Cap content to a sensible size (ledger entries are single-line-ish).
 if prompt:
     print(prompt[:500])
 ' <<< "$INPUT_JSON" 2>/dev/null || true)
+
+    # Full prompt (uncapped) goes to autoremember so multi-paragraph
+    # "from now on, always do X" rules don't get truncated.
+    FULL_PROMPT_FILE=$(mktemp -t hippo-prompt.XXXXXX)
+    python3 -c '
+import json, sys
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data = {}
+prompt = (data.get("prompt") or "").strip()
+sys.stdout.write(prompt)
+' <<< "$INPUT_JSON" > "$FULL_PROMPT_FILE" 2>/dev/null || true
 fi
 
 # Side effect: log the ask BEFORE we render the context so the new ask is
 # visible in the live block we emit.
 if [[ -n "$PROMPT" && -x "$HIPPO_BIN" ]]; then
     HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" progress log ask "$PROMPT" --client "$CLIENT" >/dev/null 2>&1 || true
+fi
+
+# V9 G5 — auto-remember on "remember / always / never / add to rules / …" triggers.
+# Best-effort; never blocks the turn.
+if [[ -n "$FULL_PROMPT_FILE" && -s "$FULL_PROMPT_FILE" && -x "$HIPPO_BIN" ]]; then
+    HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" autoremember --client "$CLIENT" --stdin --quiet < "$FULL_PROMPT_FILE" >/dev/null 2>&1 || true
+    rm -f "$FULL_PROMPT_FILE" || true
 fi
 
 # Render the live snapshot — working ledger + top fragments matching the prompt.

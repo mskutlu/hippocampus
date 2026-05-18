@@ -673,6 +673,144 @@ def context_cmd(
     sys.stdout.write(payload)
 
 
+@cli.command("autoremember")
+@click.argument("prompt", required=False)
+@click.option("--client", "-c", default="cli", help="Client name (devin, claude-code, ...)")
+@click.option("--stdin", is_flag=True, help="Read the prompt from stdin instead of argv")
+@click.option("--quiet", is_flag=True, help="Only emit the fragment id on success, nothing on no-op")
+def autoremember_cmd(prompt: Optional[str], client: str, stdin: bool, quiet: bool) -> None:
+    """Scan a user prompt for autoremember triggers and persist if found.
+
+    Triggers: remember, always, never, don't forget, from now on, next time,
+    add to (global) rules, keep in mind, make sure you. Designed to be wired
+    into the UserPromptSubmit hook so the AI's "user told me to always X"
+    moments become durable fragments automatically.
+    """
+    if stdin or prompt is None:
+        prompt = sys.stdin.read()
+    os.environ["HIPPOCAMPUS_CLIENT"] = client
+    _bootstrap()
+    from hippocampus.mcp import tools
+    out = tools.auto_remember(prompt or "", client=client)
+    if quiet:
+        if out.get("remembered"):
+            click.echo(out["fragment"]["id"])
+        return
+    click.echo(json.dumps(out, indent=2))
+
+
+@cli.command("dedup")
+@click.option("--threshold", type=float, default=None, help="Cosine similarity above which pairs are duplicates (default 0.95)")
+@click.option("--limit", type=int, default=20, help="Max pairs to show")
+@click.option("--merge", nargs=2, type=str, default=None, help="Merge fragment A into fragment B (keeper, loser)")
+def dedup_cmd(threshold: Optional[float], limit: int, merge: Optional[tuple[str, str]]) -> None:
+    """Find near-duplicate fragments by cosine similarity, or merge a specific pair.
+
+    Without --merge, prints candidates as JSON. Use this output to decide which
+    pairs to merge with `hippo dedup --merge <keeper> <loser>`.
+    """
+    _bootstrap()
+    from hippocampus.embeddings import dedup as dedup_mod
+
+    if merge:
+        keeper, loser = merge
+        out = dedup_mod.merge(keeper, loser)
+        click.echo(json.dumps(out, indent=2))
+        return
+
+    pairs = dedup_mod.find_duplicates(threshold=threshold, limit=limit)
+    out = [
+        {"keeper": p.keeper, "loser": p.loser, "score": round(p.score, 4)}
+        for p in pairs
+    ]
+    click.echo(json.dumps({"threshold": threshold, "count": len(out), "pairs": out}, indent=2))
+
+
+@cli.command("observe")
+@click.option("--source", type=str, default=None, help="JSONL file path (default: ~/.hippocampus/observations.jsonl)")
+@click.option("--dry-run", is_flag=True, help="Show what would be created without writing")
+def observe_cmd(source: Optional[str], dry_run: bool) -> None:
+    """Ingest external observations from a JSONL file into auto-observed fragments.
+
+    Each line must be a JSON object with `content` (required), `summary` (optional),
+    `tags` (optional list), `source_ref` (optional). Tracks offset between runs in
+    `~/.hippocampus/.observe.offset` so re-running only processes new lines.
+
+    Designed for shell-side / git-side / cron-side automation: append observations
+    to the JSONL file from anywhere; this CLI turns them into fragments idempotently.
+    """
+    _bootstrap()
+    from pathlib import Path as _P
+    from hippocampus.mcp import tools as T
+
+    src = _P(source) if source else (config.HIPPOCAMPUS_HOME / "observations.jsonl")
+    offset_path = config.HIPPOCAMPUS_HOME / ".observe.offset"
+    if not src.exists():
+        click.echo(json.dumps({"status": "no_source", "path": str(src)}, indent=2))
+        return
+
+    last_offset = 0
+    if offset_path.exists():
+        try:
+            last_offset = int(offset_path.read_text(encoding="utf-8").strip() or "0")
+        except (ValueError, OSError):
+            last_offset = 0
+
+    created: list[dict] = []
+    with src.open("r", encoding="utf-8") as fh:
+        fh.seek(last_offset)
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            content = (record.get("content") or "").strip()
+            if not content:
+                continue
+            summary = (record.get("summary") or "").strip() or content[:120]
+            tags = list(record.get("tags") or []) + ["auto-observed"]
+            source_ref = record.get("source_ref")
+
+            if dry_run:
+                created.append({"summary": summary, "tags": tags, "source_ref": source_ref})
+                continue
+
+            res = T.remember(
+                content=content,
+                summary=summary,
+                tags=tags,
+                source_type="auto-observed",
+                source_ref=source_ref,
+                pinned=False,
+            )
+            frag = res.get("fragment") or {}
+            # Hard-set the lower initial confidence for auto-observed entries.
+            obs_conf = float(config.get_setting("observe_default_confidence") or 0.30)
+            try:
+                from hippocampus.storage import fragments as frag_store
+                frag_store.update_fields(frag.get("id"), confidence=obs_conf)
+            except Exception:
+                pass
+            created.append({"id": frag.get("id"), "summary": frag.get("summary")})
+
+        new_offset = fh.tell()
+
+    if not dry_run:
+        offset_path.write_text(str(new_offset), encoding="utf-8")
+
+    click.echo(json.dumps({
+        "source": str(src),
+        "previous_offset": last_offset,
+        "new_offset": new_offset,
+        "dry_run": dry_run,
+        "created": created,
+        "count": len(created),
+    }, indent=2))
+
+
 @cli.command("install-hooks")
 def install_hooks_cmd() -> None:
     """Install SessionStart + UserPromptSubmit hooks into Devin + Claude Code.

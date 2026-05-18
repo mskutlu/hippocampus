@@ -128,9 +128,25 @@ def create(
     source_ref: str | None = None,
     pinned: bool = False,
 ) -> Fragment:
-    """Insert a new fragment. Returns the hydrated Fragment."""
+    """Insert a new fragment. Returns the hydrated Fragment.
+
+    v1.6.0: incoming tags are funnelled through `tag_canonical.canonicalize`
+    before insert. A new tag that has > tag_canonicalize_threshold string
+    similarity to an existing tag is replaced with the existing one. Stops
+    the long-tail of singleton tags (`bryntum-upgrade`, `phase-1`, …).
+    """
     fid = f"frag_{ULID()}"
     now = _utc_now()
+
+    # Canonicalize tags BEFORE opening the write transaction so the read
+    # query against fragment_tags doesn't fight for the write lock.
+    canonical_tags: list[str] = []
+    if tags:
+        try:
+            from hippocampus.storage import tag_canonical
+            canonical_tags = tag_canonical.canonicalize([t.strip() for t in tags if t.strip()])
+        except Exception:
+            canonical_tags = [t.strip() for t in tags if t.strip()]
 
     with get_conn() as conn:
         conn.execute(
@@ -143,10 +159,10 @@ def create(
             (fid, content, summary, source_type, source_ref,
              config.CONFIDENCE_INIT, now, now, 1 if pinned else 0),
         )
-        if tags:
+        if canonical_tags:
             conn.executemany(
                 "INSERT OR IGNORE INTO fragment_tags(fragment_id, tag) VALUES (?, ?)",
-                [(fid, t.strip()) for t in tags if t.strip()],
+                [(fid, t) for t in canonical_tags],
             )
         row = conn.execute("SELECT * FROM fragments WHERE id = ?", (fid,)).fetchone()
         frag_tags = _fetch_tags(conn, fid)
