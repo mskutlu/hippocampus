@@ -110,7 +110,7 @@ _CONFIG_FILE = HIPPOCAMPUS_HOME / "config.json"
 
 _DEFAULTS: dict[str, Any] = {
     "working_block_mode": "per_client",   # {"per_client", "shared"}
-    "auto_end_idle_minutes": None,        # None disables; int => minutes
+    "auto_end_idle_minutes": 60,          # was None; v1.6.0 enables by default
     "embedding_provider": "fastembed",    # fastembed | sentence-transformers
     "embedding_model": "BAAI/bge-small-en-v1.5",
     "embedding_truncate_dim": None,       # Matryoshka truncation (int) or None
@@ -121,6 +121,20 @@ _DEFAULTS: dict[str, Any] = {
     "hook_inject_fragments": True,         # include top-N long-term fragments
     "hook_fragment_limit": 5,              # max fragments per hook payload
     "hook_inject_budget_chars": 3500,      # hard cap on hook additionalContext
+    # V9 — passive autonomy + biology recalibration
+    "decay_skip_recent_days": 30,          # don't decay fragments accessed in last N days
+    "auto_distill_min_entries": 3,         # idle session must have >= N entries to distill
+    "auto_pin_access_threshold": 10,       # auto-pin a fragment after N accesses
+    "log_progress_recall_boost_k": 3,      # how many semantic hits to boost per log_progress
+    "log_progress_recall_min_score": 0.50, # min semantic score to qualify
+    "cluster_boost_factor": 0.33,          # neighbor boost = BOOST_DELTA * factor
+    "tag_canonicalize_threshold": 0.85,    # difflib ratio above this -> use existing tag
+    "dedup_cosine_threshold": 0.95,        # hippo dedup: pairs above this are duplicates
+    "autoremember_enabled": True,          # UserPromptSubmit pattern-detect
+    "autoremember_min_chars": 60,          # skip short prompts (no rule body)
+    "inferred_negation_enabled": True,     # auto-forget on negation
+    "inferred_negation_window_turns": 2,   # only consider last N turns for the cite-target
+    "observe_default_confidence": 0.30,    # hippo observe starts fragments here (vs 0.50)
 }
 
 

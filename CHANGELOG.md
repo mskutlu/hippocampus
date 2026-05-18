@@ -7,6 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-18
+
+### Added — Passive autonomy + biology recalibration
+
+Goal: "remember without telling things by itself". The audit on 2026-05-18
+found a 16:1 decay/boost ratio, 65% singleton tags, a 12.9% session-distill
+rate, and zombie fragments accessed 22× sitting at conf=0.00. v1.6.0 fixes
+all of these without breaking the v1.5 hook contract.
+
+#### Biology recalibration
+- **Decay recency shield** — `decay_skip_recent_days` (default `30`): any
+  fragment whose `last_accessed_at` is within the window is held off decay
+  even when the session shield doesn't catch it. Stops the 16:1 ratio.
+- **Auto-pin on access** — `auto_pin_access_threshold` (default `10`):
+  the moment a fragment crosses N accesses, the next `boost()` flips it
+  pinned. Zombie-protection: high-traffic knowledge cannot be decayed
+  to zero again.
+- **Cluster-level boost** — `cluster_boost_factor` (default `0.33`):
+  when `boost_many(…, cluster_propagate=True)` fires, first-degree
+  neighbors in the associations graph receive a smaller boost so
+  tight co-access communities stay warm together.
+
+#### Session lifecycle
+- **`auto_end_idle_minutes` defaults to `60`** (was `None`). Set to `0`
+  to disable.
+- **Auto-distill on idle** — when `auto_end_idle_sessions()` closes an
+  idle session that has at least `auto_distill_min_entries` (default `3`)
+  ledger entries, it automatically creates a `source_type=session-summary`
+  fragment tagged `auto-distilled` BEFORE rotating. Previously 12.9% of
+  sessions produced a fragment; this should land it close to 100% for
+  any session that did real work.
+
+#### Passive remembering
+- **`hippo autoremember <prompt>` + `auto_remember` MCP tool** — scans for
+  triggers (`remember`, `always`, `never`, `don't forget`, `from now on`,
+  `next time`, `add to (global) rules`, `keep in mind`, `make sure you`),
+  captures the sentence + 1-sentence context, and persists as a fragment
+  tagged `auto-remembered` + `trigger:<phrase>`. Idempotent: identical
+  summaries are deduplicated.
+- **UserPromptSubmit hook calls autoremember** automatically on every
+  turn. Re-run `hippo install-hooks` to pick this up.
+- **log_progress now recall-and-boosts the knowledge graph.** After the
+  explicit-`frag_…`-id boost path, the entry's content is fed to `recall`
+  and the top-K semantic hits (default `3`, threshold `0.50`) receive a
+  full boost plus cluster propagation. Means every `done`, `decision`,
+  and `next` reinforces the related fragments automatically.
+
+#### Robustness fixes (latent bugs surfaced by autonomy)
+- **`recall()` survives FTS5 parse errors.** Free-text queries that
+  contained `:`, `-`, or other FTS5 syntax characters previously raised
+  `sqlite3.OperationalError`. Now the call degrades to a sanitised
+  retry, and on a second failure to semantic-only.
+- **Tag canonicalization** — new tags with > `tag_canonicalize_threshold`
+  (default 0.85) string-similarity to an existing tag are folded onto the
+  canonical tag at insert time. Stops the 368-singleton tag explosion.
+  Also folds within-input near-duplicates (`["foo","Foo","FOO"] → ["foo"]`).
+
+#### Negative-feedback inference
+- When a `log_progress(kind="ask")` prompt opens with a strong negation
+  (`no`, `nope`, `wrong`, `actually,? not`, `hayır`, `yanlış`, …),
+  the most recently `log_progress` / `recall` / `cluster:`-boosted
+  fragment in the current session is automatically demoted via
+  `forget()`. Window: the broader of the session's start time and the
+  last `inferred_negation_window_turns` ledger entries (default `2`).
+  Off-switch: `inferred_negation_enabled = false`.
+
+#### Predictive recall in hooks
+- `clients/hook_context.render_context` now consults the live ledger
+  (latest ask + last 3 dones) as additional recall query streams. The
+  long-term `additionalContext` block returned by every hook payload
+  therefore reflects what the AI is actually working on right now, not
+  just the explicit `--query` argument.
+
+#### New CLIs
+- **`hippo dedup [--threshold 0.95] [--limit 20] [--merge keeper loser]`**
+  Pairwise cosine on every stored embedding; reports duplicate candidates
+  ranked by similarity. `--merge` keeps the higher-confidence row, copies
+  the loser's tags + content (deduped), re-embeds, then deletes the loser.
+- **`hippo observe [--source <path>] [--dry-run]`**
+  Reads JSONL records (`{"content":...,"summary":...,"tags":...,"source_ref":...}`)
+  from `~/.hippocampus/observations.jsonl` (default) and creates fragments
+  with `source_type=auto-observed` at confidence `observe_default_confidence`
+  (default 0.30 — lower than manual 0.50). Persists offset between runs in
+  `.observe.offset`. Designed for git hooks, cron jobs, and shell-side
+  automation to push observations without the AI being in the loop.
+
+#### Settings added
+| Key | Default |
+|-----|---------|
+| `auto_end_idle_minutes` | `60` (was `None`) |
+| `decay_skip_recent_days` | `30` |
+| `auto_distill_min_entries` | `3` |
+| `auto_pin_access_threshold` | `10` |
+| `log_progress_recall_boost_k` | `3` |
+| `log_progress_recall_min_score` | `0.50` |
+| `cluster_boost_factor` | `0.33` |
+| `tag_canonicalize_threshold` | `0.85` |
+| `dedup_cosine_threshold` | `0.95` |
+| `autoremember_enabled` | `True` |
+| `autoremember_min_chars` | `60` |
+| `inferred_negation_enabled` | `True` |
+| `inferred_negation_window_turns` | `2` |
+| `observe_default_confidence` | `0.30` |
+
+All settings overridable via `hippo config set <key> <value>` or
+`HIPPO_<KEY>` env var.
+
+#### Tests
+122 total, 34 new for v1.6:
+- `tests/unit/test_decay_recency_skip.py` (4)
+- `tests/unit/test_auto_pin.py` (3)
+- `tests/unit/test_autoremember.py` (7)
+- `tests/unit/test_tag_canonical.py` (4)
+- `tests/unit/test_negation.py` (4)
+- `tests/unit/test_dedup.py` (3)
+- `tests/integration/test_auto_distill.py` (3)
+- `tests/integration/test_log_progress_recall_boost.py` (3)
+- `tests/integration/test_observe.py` (3)
+
+#### Compatibility
+- Re-run `hippo install-hooks` to pick up the new UserPromptSubmit script
+  that calls `hippo autoremember`.
+- All new features are settings-driven with safe defaults. Set any key
+  to 0 / false to revert that feature individually.
+- No schema changes.
+
 ## [1.5.0] - 2026-05-13
 
 ### Added — Compaction-safe context re-injection

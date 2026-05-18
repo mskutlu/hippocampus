@@ -83,3 +83,12 @@ def get_associated(fragment_id: str, limit: int = 10) -> list[tuple[str, float, 
             (fragment_id, fragment_id, fragment_id, limit),
         ).fetchall()
     return [(r["other"], float(r["weight"]), int(r["co_accessed_count"])) for r in rows]
+
+
+def neighbors_of(fragment_id: str, *, limit: int = 8, min_weight: float = 1.0) -> list[str]:
+    """Return the fragment ids most strongly co-accessed with this one.
+
+    Used by cluster-level boost (v1.6.0 C2): when one fragment is reinforced,
+    its tightest neighbors get a smaller share so the network learns clusters.
+    """
+    return [other for other, w, _ in get_associated(fragment_id, limit=limit) if w >= min_weight]

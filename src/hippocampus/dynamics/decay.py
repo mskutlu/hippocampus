@@ -1,19 +1,22 @@
 """Session-scoped decay loop.
 
-Rules (exactly per spec):
+Rules:
 
 * Per decay cycle, for every fragment:
     - if pinned: no change.
-    - if accessed in the current OR previous session: no change (shield).
+    - if accessed in the current OR previous session: no change (session shield).
+    - if accessed within the last `decay_skip_recent_days` (default 30): no change
+      (recency shield, added in v1.6.0 to fix the 16:1 decay/boost ratio).
     - else: confidence -= DECAY_DELTA (floor CONFIDENCE_MIN).
-* Time is never used — a fragment does not decay just because wall-clock time
-  passes. Decay only happens when a cycle is explicitly run (launchd hourly).
+* Time is never used to decay — only to shield. A fragment does not decay just
+  because wall-clock time passes; decay only happens when a cycle is explicitly
+  run (launchd hourly).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from hippocampus import config
 from hippocampus.storage import feedback, fragments as frag_store, sessions
@@ -24,6 +27,7 @@ class DecayResult:
     fragments_scanned: int = 0
     fragments_decayed: int = 0
     fragments_shielded: int = 0
+    fragments_recency_skipped: int = 0
     fragments_pinned_skipped: int = 0
     fragments_flagged_for_archive: int = 0
 
@@ -32,6 +36,7 @@ class DecayResult:
             "fragments_scanned": self.fragments_scanned,
             "fragments_decayed": self.fragments_decayed,
             "fragments_shielded": self.fragments_shielded,
+            "fragments_recency_skipped": self.fragments_recency_skipped,
             "fragments_pinned_skipped": self.fragments_pinned_skipped,
             "fragments_flagged_for_archive": self.fragments_flagged_for_archive,
         }
@@ -63,6 +68,14 @@ def run_decay_cycle(*, dry_run: bool = False) -> DecayResult:
 
     shield = sessions.accessed_fragment_ids_in_sessions(sessions.last_n_session_ids(n=2))
 
+    # v1.6.0 — recency shield: anything accessed within N days is held off decay
+    skip_days = int(config.get_setting("decay_skip_recent_days") or 0)
+    recency_cutoff_iso: str | None = None
+    if skip_days > 0:
+        recency_cutoff_iso = (
+            datetime.now(timezone.utc) - timedelta(days=skip_days)
+        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
     result = DecayResult()
     now_iso = _utc_now()
 
@@ -75,6 +88,11 @@ def run_decay_cycle(*, dry_run: bool = False) -> DecayResult:
 
         if frag.id in shield:
             result.fragments_shielded += 1
+            continue
+
+        # v1.6.0 — recency shield
+        if recency_cutoff_iso and frag.last_accessed_at and frag.last_accessed_at >= recency_cutoff_iso:
+            result.fragments_recency_skipped += 1
             continue
 
         new_conf = max(config.CONFIDENCE_MIN, frag.confidence - config.DECAY_DELTA)

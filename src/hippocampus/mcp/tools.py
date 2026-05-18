@@ -77,9 +77,23 @@ def recall(
     pool_size = max(limit * 4, limit + 3)
 
     # --- FTS candidates -----------------------------------------------------
-    fts_hits = frag_store.search_fts(
-        query=query, limit=pool_size, min_confidence=min_confidence
-    )
+    # FTS5 has its own syntax (column:value, hyphens, quotes, parentheses, etc).
+    # Free-text user queries can trip the parser; degrade to semantic-only on error.
+    try:
+        fts_hits = frag_store.search_fts(
+            query=query, limit=pool_size, min_confidence=min_confidence
+        )
+    except Exception:
+        # FTS parse error — fall back to semantic-only. Try a sanitised retry
+        # first so we still get FTS hits for the common single-word case.
+        import re as _re
+        sanitised = _re.sub(r"[^\w\s]", " ", query).strip()
+        try:
+            fts_hits = frag_store.search_fts(
+                query=sanitised, limit=pool_size, min_confidence=min_confidence
+            ) if sanitised else []
+        except Exception:
+            fts_hits = []
     fts_scores: dict[str, float] = {}
     fts_frags: dict[str, Any] = {}
     for rank_idx, f in enumerate(fts_hits):
@@ -381,7 +395,17 @@ def log_progress(
             "session_id": session_id,
         }
 
-    # Auto-tag / boost fragments referenced in the entry.
+    # v1.6.0 — negation inference (B4). When the user pushes back at the start
+    # of an ask, demote the most recent fragment we boosted in this session.
+    demoted_id: str | None = None
+    if kind == "ask" and content:
+        try:
+            from hippocampus.dynamics import negation as negation_dyn
+            demoted_id = negation_dyn.infer_and_forget(content, session_id=session_id)
+        except Exception:
+            demoted_id = None
+
+    # Auto-tag / boost fragments referenced in the entry by explicit `frag_…` id.
     referenced_ids: list[str] = []
     haystack = " ".join(filter(None, [content, details]))
     for match in FRAGMENT_ID_RE.findall(haystack):
@@ -396,12 +420,70 @@ def log_progress(
         )
         referenced_ids.append(match)
 
+    # v1.6.0 — also boost the top-K semantically-matched fragments (A5 + C2).
+    # Means every log_progress reinforces the knowledge graph, not just entries
+    # the AI bothered to cite by id. Cluster propagation pushes a smaller boost
+    # to first-degree neighbors so co-accessed knowledge stays warm.
+    auto_boosted: list[str] = []
+    try:
+        k = int(config.get_setting("log_progress_recall_boost_k") or 0)
+        min_score = float(config.get_setting("log_progress_recall_min_score") or 0.0)
+        if k > 0 and haystack.strip():
+            search_res = recall(query=haystack, limit=k * 2, context_tag=None)
+            hits = (search_res or {}).get("fragments") or []
+            keepers: list[str] = []
+            for h in hits:
+                scores = h.get("scores") or {}
+                sem = float(scores.get("semantic") or 0.0)
+                if sem < min_score:
+                    continue
+                if h["id"] in referenced_ids:
+                    continue  # already boosted by explicit-id path
+                keepers.append(h["id"])
+                if len(keepers) >= k:
+                    break
+            if keepers:
+                boost_dyn.boost_many(
+                    keepers,
+                    context_tag=f"log_progress_auto:{kind}",
+                    session_id=session_id,
+                    client=client_name,
+                    cluster_propagate=True,
+                )
+                auto_boosted = keepers
+    except Exception:
+        # Best-effort enrichment; never break log_progress.
+        auto_boosted = []
+
     _refresh_working_block(client_name)
     return {
         "logged": True,
         "entry": entry.to_dict(),
         "boosted_fragments": referenced_ids,
+        "auto_boosted_fragments": auto_boosted,
+        "demoted_fragment_id": demoted_id,
     }
+
+
+def auto_remember(prompt: str, client: str | None = None) -> dict[str, Any]:
+    """V9 G5 — scan a user prompt for autoremember triggers and persist if found.
+
+    Returns {"remembered": bool, "fragment": <dict|None>, "trigger": <str|None>}.
+    Designed to be called by the UserPromptSubmit hook on every turn.
+    """
+    _ensure_bootstrapped()
+    client_name = (client or _client_from_env()).strip().lower() or "unknown"
+
+    from hippocampus.dynamics import autoremember as auto_dyn
+
+    rule = auto_dyn.detect(prompt or "")
+    if rule is None:
+        return {"remembered": False, "fragment": None, "trigger": None}
+
+    frag = auto_dyn.auto_remember_from_prompt(prompt, client=client_name)
+    if frag is None:
+        return {"remembered": False, "fragment": None, "trigger": rule.trigger, "reason": "duplicate_or_disabled"}
+    return {"remembered": True, "fragment": frag, "trigger": rule.trigger}
 
 
 def undo_last_entry(client: str | None = None) -> dict[str, Any]:
@@ -531,20 +613,56 @@ def _render_ledger_as_fragment(entries: list[ledger_store.LedgerEntry], *, expli
 def auto_end_idle_sessions() -> dict[str, Any]:
     """Close any open session whose last activity exceeds `auto_end_idle_minutes`.
 
-    Called from the decay cycle, so it runs at most once per hour (and only
-    if the user has set `auto_end_idle_minutes`).
+    v1.6.0: also auto-distills any closed session that has at least
+    `auto_distill_min_entries` ledger entries into a `source_type=session-summary`
+    fragment. This turns the 12.9% distillation rate measured pre-1.6 into
+    something close to "every meaningful session leaves a durable trace".
+
+    Called from the decay cycle, so it runs at most once per hour.
     """
     _ensure_bootstrapped()
     minutes = config.get_setting("auto_end_idle_minutes")
     if not minutes:  # None or 0 disables
         return {"ended": 0, "reason": "disabled"}
     minutes_int = int(minutes)
+    min_entries = int(config.get_setting("auto_distill_min_entries") or 0)
+
     ended: list[dict[str, Any]] = []
     for sid, client in sessions.idle_sessions(minutes_int):
+        distilled_id: str | None = None
+        try:
+            entries = ledger_store.current_entries(sid)
+        except Exception:
+            entries = []
+        if min_entries > 0 and len(entries) >= min_entries:
+            try:
+                summary = _derive_summary(entries)
+                content = _render_ledger_as_fragment(entries, explicit_summary=summary)
+                frag = frag_store.create(
+                    content=content,
+                    summary=summary,
+                    tags=["session-summary", client, "auto-distilled"],
+                    source_type="session-summary",
+                    source_ref=sid,
+                )
+                distilled_id = frag.id
+                try:
+                    from hippocampus.embeddings import search as semantic_search
+                    semantic_search.upsert_for_fragment(frag.id)
+                except Exception:
+                    pass
+            except Exception:
+                distilled_id = None
+
         sessions.close_session(sid)
         sessions.open_session(client)
         _refresh_working_block(client)
-        ended.append({"session_id": sid, "client": client})
+        ended.append({
+            "session_id": sid,
+            "client": client,
+            "entries": len(entries),
+            "distilled_fragment_id": distilled_id,
+        })
     return {"ended": len(ended), "minutes": minutes_int, "sessions": ended}
 
 
