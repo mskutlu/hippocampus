@@ -5,7 +5,8 @@
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │ AI Clients (each over MCP stdio)                              │
-│  Devin · Claude Code · OpenCode · Windsurf · Antigravity      │
+│  Devin · Claude Code · Codex · OpenCode · Windsurf            │
+│  · Antigravity · VS Code Copilot · Pi via extension           │
 └───────────────────────┬───────────────────────────────────────┘
                         │
                         ▼
@@ -41,9 +42,12 @@
 │   always-on rules file:                                       │
 │   ~/.config/devin/AGENTS.md                                   │
 │   ~/.claude/CLAUDE.md                                         │
+│   ~/.codex/AGENTS.md                                          │
 │   ~/.config/opencode/AGENTS.md                                │
 │   ~/.codeium/windsurf/memories/global_rules.md                │
 │   ~/.antigravity/rules/global_rules.md                        │
+│   ~/.copilot/instructions/hippocampus.instructions.md         │
+│   ~/.pi/agent/AGENTS.md                                       │
 └───────────────────────────────────────────────────────────────┘
 ```
 

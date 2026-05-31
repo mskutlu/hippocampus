@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,101 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def _toml_array(values: list[str]) -> str:
+    return "[" + ", ".join(_toml_string(v) for v in values) + "]"
+
+
+def _load_toml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return {}
+
+
+def _remove_codex_mcp_tables(text: str) -> str:
+    lines = text.splitlines()
+    kept: list[str] = []
+    skip = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            table = stripped.strip("[]").strip()
+            skip = table == f"mcp_servers.{MCP_ENTRY_NAME}" or table == f"mcp_servers.{MCP_ENTRY_NAME}.env"
+        if not skip:
+            kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
+def _codex_entry_toml(spec: ClientSpec, cmd: dict[str, Any]) -> str:
+    env = {"HIPPOCAMPUS_CLIENT": spec.name}
+    lines = [
+        f"[mcp_servers.{MCP_ENTRY_NAME}]",
+        f"command = {_toml_string(cmd['command'])}",
+        f"args = {_toml_array(cmd['args'])}",
+        "",
+        f"[mcp_servers.{MCP_ENTRY_NAME}.env]",
+    ]
+    lines.extend(f"{key} = {_toml_string(value)}" for key, value in sorted(env.items()))
+    return "\n".join(lines)
+
+
+def _codex_entry_data(spec: ClientSpec, cmd: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "command": cmd["command"],
+        "args": cmd["args"],
+        "env": {"HIPPOCAMPUS_CLIENT": spec.name},
+    }
+
+
+def _install_codex_toml(spec: ClientSpec) -> tuple[bool, str]:
+    path = spec.mcp_config_path
+    if path is None:
+        return False, f"{spec.name}: no MCP config path configured"
+
+    cmd = _hippocampus_command()
+    desired = _codex_entry_data(spec, cmd)
+    existing_data = _load_toml(path)
+    existing = (existing_data.get("mcp_servers") or {}).get(MCP_ENTRY_NAME)
+    if existing == desired:
+        return False, f"{spec.name}: already registered at {path}"
+
+    _backup(path)
+    _ensure_dir(path)
+    existing_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    base = _remove_codex_mcp_tables(existing_text)
+    body = _codex_entry_toml(spec, cmd)
+    new_text = (base + "\n\n" + body if base else body).rstrip() + "\n"
+    path.write_text(new_text, encoding="utf-8")
+    return True, f"{spec.name}: registered at {path}"
+
+
+def _codex_toml_is_registered(spec: ClientSpec) -> bool:
+    path = spec.mcp_config_path
+    if path is None or not path.exists():
+        return False
+    data = _load_toml(path)
+    return MCP_ENTRY_NAME in (data.get("mcp_servers") or {})
+
+
+def _uninstall_codex_toml(spec: ClientSpec) -> tuple[bool, str]:
+    path = spec.mcp_config_path
+    if path is None or not path.exists():
+        return False, f"{spec.name}: no config to clean"
+    text = path.read_text(encoding="utf-8")
+    cleaned = _remove_codex_mcp_tables(text).rstrip() + "\n"
+    if cleaned == text:
+        return False, f"{spec.name}: entry not present"
+    _backup(path)
+    path.write_text(cleaned, encoding="utf-8")
+    return True, f"{spec.name}: removed from {path}"
+
+
 def _server_bucket(data: dict, fmt: str) -> dict[str, Any] | None:
     if fmt == "vscode-mcp-json":
         data.setdefault("servers", {})
@@ -79,7 +175,95 @@ def _server_bucket(data: dict, fmt: str) -> dict[str, Any] | None:
     return None
 
 
+def _pi_extension_template_dir() -> Path:
+    """Path to the source extension directory bundled in the repo."""
+    return Path(__file__).resolve().parents[3] / "scripts" / "pi-extension"
+
+
+def _pi_extension_index(spec: ClientSpec) -> Path:
+    """Where the installed extension's entry file lives."""
+    return spec.mcp_config_path / "index.ts" if spec.mcp_config_path else Path()
+
+
+def _install_pi_extension(spec: ClientSpec) -> tuple[bool, str]:
+    """Drop the Hippocampus Pi extension into ~/.pi/agent/extensions/hippocampus.
+
+    Pi auto-discovers everything under ~/.pi/agent/extensions/, so simply
+    placing the directory there is the entire registration step. We render
+    `__HIPPO_BIN__` and `__HIPPOCAMPUS_MCP__` placeholders so the extension can
+    spawn the MCP server without relying on PATH from inside Pi.
+    """
+    dest = spec.mcp_config_path
+    if dest is None:
+        return False, f"{spec.name}: no extension path configured"
+
+    src = _pi_extension_template_dir()
+    if not src.exists():
+        return False, f"{spec.name}: bundled extension missing at {src}"
+
+    cmd = _hippocampus_command()
+    mcp_invocation = " ".join([cmd["command"], *cmd["args"]]).strip()
+
+    import os as _os
+    hippo_bin = _os.environ.get("HIPPOCAMPUS_HIPPO_BIN")
+    if not hippo_bin:
+        hippo_bin = shutil.which("hippo") or "hippo"
+
+    dest.mkdir(parents=True, exist_ok=True)
+    rendered: list[str] = []
+    for entry in sorted(src.iterdir()):
+        if entry.is_dir() or entry.name.startswith("."):
+            continue
+        target = dest / entry.name
+        body = entry.read_text(encoding="utf-8")
+        body = body.replace("__HIPPO_BIN__", hippo_bin)
+        body = body.replace("__HIPPOCAMPUS_MCP__", mcp_invocation)
+        body = body.replace("__HIPPOCAMPUS_CLIENT__", spec.name)
+        # Idempotency — only touch the file when content changes
+        if target.exists() and target.read_text(encoding="utf-8") == body:
+            continue
+        target.write_text(body, encoding="utf-8")
+        rendered.append(target.name)
+
+    if rendered:
+        return True, f"{spec.name}: installed extension at {dest} ({', '.join(rendered)})"
+    return False, f"{spec.name}: extension already current at {dest}"
+
+
+def _pi_extension_is_registered(spec: ClientSpec) -> bool:
+    idx = _pi_extension_index(spec)
+    return bool(idx) and idx.exists()
+
+
+def _uninstall_pi_extension(spec: ClientSpec) -> tuple[bool, str]:
+    dest = spec.mcp_config_path
+    if dest is None or not dest.exists():
+        return False, f"{spec.name}: no extension to remove"
+    # Only remove files we installed; never recursive-delete a non-empty dir
+    # the user might have touched.
+    removed = 0
+    for entry in dest.iterdir():
+        if entry.is_dir():
+            continue
+        try:
+            entry.unlink()
+            removed += 1
+        except OSError:
+            pass
+    try:
+        dest.rmdir()
+    except OSError:
+        pass
+    if removed:
+        return True, f"{spec.name}: removed extension at {dest}"
+    return False, f"{spec.name}: nothing to remove at {dest}"
+
+
 def is_registered(spec: ClientSpec) -> bool:
+    if spec.mcp_config_format == "codex-toml":
+        return _codex_toml_is_registered(spec)
+    if spec.mcp_config_format == "pi-extension":
+        return _pi_extension_is_registered(spec)
     path = spec.mcp_config_path
     if path is None or not path.exists():
         return False
@@ -93,14 +277,20 @@ def is_registered(spec: ClientSpec) -> bool:
 def register(spec: ClientSpec) -> tuple[bool, str]:
     """Register the Hippocampus MCP server in one client's config.
 
-    Returns (changed, message).
+    Returns (changed, message). For Pi (which has no native MCP support),
+    this installs a TypeScript extension that bridges to the MCP server.
     """
-    cmd = _hippocampus_command()
     fmt = spec.mcp_config_format
     path = spec.mcp_config_path
     if path is None:
         return False, f"{spec.name}: no MCP config path configured"
 
+    if fmt == "pi-extension":
+        return _install_pi_extension(spec)
+    if fmt == "codex-toml":
+        return _install_codex_toml(spec)
+
+    cmd = _hippocampus_command()
     _backup(path)
     _ensure_dir(path)
     data = _load_json(path)
@@ -128,6 +318,10 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
 
 
 def unregister(spec: ClientSpec) -> tuple[bool, str]:
+    if spec.mcp_config_format == "codex-toml":
+        return _uninstall_codex_toml(spec)
+    if spec.mcp_config_format == "pi-extension":
+        return _uninstall_pi_extension(spec)
     path = spec.mcp_config_path
     if path is None or not path.exists():
         return False, f"{spec.name}: no config to clean"

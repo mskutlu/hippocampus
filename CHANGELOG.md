@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Codex support
+
+- Added a first-class `codex` client whose rules file is `~/.codex/AGENTS.md`
+  and whose MCP config is `~/.codex/config.toml`.
+- Added a `codex-toml` MCP registration format that writes
+  `[mcp_servers.hippocampus]` plus `HIPPOCAMPUS_CLIENT="codex"` while
+  preserving existing Codex MCP server entries.
+- Updated docs and tests to cover Codex registration, injection paths,
+  idempotency, and surgical unregister.
+
+### Added — Pi Agent support
+
+Hippocampus now ships as a first-class client for [Pi](https://pi.dev)
+(`@earendil-works/pi-coding-agent`). Pi deliberately doesn't include
+built-in MCP, so the integration goes through a bundled TypeScript
+extension instead of a JSON config entry.
+
+- **New `pi-extension` registration format.** `src/hippocampus/clients/registry.py`
+  declares a Pi client whose `mcp_config_path` is the extension
+  directory `~/.pi/agent/extensions/hippocampus/` and whose
+  `mcp_config_format="pi-extension"`. `hippo register` / `hippo unregister`
+  install / surgically remove the extension files from that directory; the
+  long-term and working blocks inject into `~/.pi/agent/AGENTS.md` just
+  like every other client.
+- **Bundled TypeScript extension** (`scripts/pi-extension/index.ts`):
+  - Re-exposes all 13 Hippocampus MCP tools (recall, remember, log_progress,
+    …) via `pi.registerTool()` with matching TypeBox schemas.
+  - Spawns `hippocampus-mcp` as a singleton stdio child and forwards every
+    tool call over JSON-RPC 2.0 (minimal client implemented inline; no extra
+    npm dependencies).
+  - Wires Pi's lifecycle for compaction safety:
+    `session_start` opens a hippo session, `before_agent_start` logs the
+    ask + runs autoremember + appends the live `hippo context` snippet
+    to the system prompt, `session_shutdown` tears down the MCP child.
+  - Adds a `/hippocampus` slash command that runs `hippo doctor`.
+- **`hippo doctor` and `hippo hooks-status`** report Pi alongside Devin
+  and Claude Code. The `mcp:✓` badge for Pi means "extension installed".
+- **README + architecture diagram** updated for the new client.
+- **Tests:** `tests/unit/test_mcp_config.py` gains `test_register_pi_installs_extension`
+  covering install, idempotency, and surgical uninstall.
+
 ## [1.6.0] - 2026-05-18
 
 ### Added — Passive autonomy + biology recalibration

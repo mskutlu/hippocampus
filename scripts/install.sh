@@ -116,6 +116,11 @@ esac
 
 # ---------------------------------------------------------------------------
 # 4. Register MCP server in all clients (all platforms)
+#    For Devin / Claude Code / OpenCode / Windsurf / Antigravity / VS Code
+#    Copilot this drops an entry into the client's MCP config JSON. For Codex
+#    this updates ~/.codex/config.toml. For Pi
+#    (which has no native MCP) this installs the bundled TypeScript
+#    extension at ~/.pi/agent/extensions/hippocampus/.
 # ---------------------------------------------------------------------------
 echo "==> [4/5] Registering MCP server in all AI clients..."
 HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" register || true
