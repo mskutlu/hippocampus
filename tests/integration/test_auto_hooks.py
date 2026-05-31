@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
-    """`install_all` must drop executable scripts and add entries to both configs."""
+    """`install_all` must drop executable scripts and add entries to all configs."""
     from hippocampus.clients import hooks
 
     fake_home = tmp_path / "home"
@@ -18,14 +18,16 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
     results = hooks.install_all()
-    assert len(results) == 2
+    assert len(results) == 3
 
-    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 2.
+    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 2; Antigravity gets 2.
     devin_result = next(r for r in results if r["client"] == "devin")
     claude_result = next(r for r in results if r["client"] == "claude-code")
+    antigravity_result = next(r for r in results if r["client"] == "antigravity")
     assert len(devin_result["scripts"]) == 3
     assert any("post-compaction" in s for s in devin_result["scripts"])
     assert len(claude_result["scripts"]) == 2
+    assert len(antigravity_result["scripts"]) == 2
 
     for r in results:
         for script in r["scripts"]:
@@ -52,6 +54,13 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     assert "SessionStart" in claude_hooks
     assert "UserPromptSubmit" in claude_hooks
     assert "PostCompaction" not in claude_hooks
+
+    # Antigravity check — no PostCompaction.
+    antigravity_cfg = json.loads((fake_home / ".gemini" / "antigravity" / "settings.json").read_text())
+    antigravity_hooks = antigravity_cfg.get("hooks", {})
+    assert "SessionStart" in antigravity_hooks
+    assert "UserPromptSubmit" in antigravity_hooks
+    assert "PostCompaction" not in antigravity_hooks
 
 
 def test_install_is_idempotent(tmp_path, monkeypatch):
@@ -106,7 +115,8 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
     report = hooks.status()
-    assert len(report) == 2
+    # devin + claude-code (shell hooks) + antigravity (shell hooks) + pi (TS extension)
+    assert len(report) == 4
     for r in report:
         for ev, installed in r["installed"].items():
             assert installed is False, f"unexpected initial install: {r['client']}/{ev}"
@@ -115,6 +125,8 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     report_after = hooks.status()
     devin = next(r for r in report_after if r["client"] == "devin")
     claude = next(r for r in report_after if r["client"] == "claude-code")
+    antigravity = next(r for r in report_after if r["client"] == "antigravity")
+    pi = next(r for r in report_after if r["client"] == "pi")
 
     assert devin["installed"]["SessionStart"] is True
     assert devin["installed"]["UserPromptSubmit"] is True
@@ -124,6 +136,26 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     assert claude["installed"]["UserPromptSubmit"] is True
     # Claude Code doesn't get PostCompaction at all — report should not pretend it's expected.
     assert "PostCompaction" not in claude["installed"]
+
+    assert antigravity["installed"]["SessionStart"] is True
+    assert antigravity["installed"]["UserPromptSubmit"] is True
+    assert "PostCompaction" not in antigravity["installed"]
+
+    # Pi hooks live inside the TypeScript extension — install_all only handles
+    # Devin + Claude Code + Antigravity shell hooks, so Pi stays False until `hippo register`.
+    assert pi["installed"]["session_start"] is False
+    assert pi["installed"]["before_agent_start"] is False
+    assert pi["installed"]["session_shutdown"] is False
+
+    # Drop a fake index.ts to simulate `hippo register` and confirm status flips.
+    pi_index = fake_home / ".pi" / "agent" / "extensions" / "hippocampus" / "index.ts"
+    pi_index.parent.mkdir(parents=True, exist_ok=True)
+    pi_index.write_text("// fake", encoding="utf-8")
+
+    report_pi = next(r for r in hooks.status() if r["client"] == "pi")
+    assert report_pi["installed"]["session_start"] is True
+    assert report_pi["installed"]["before_agent_start"] is True
+    assert report_pi["installed"]["session_shutdown"] is True
 
 
 def test_post_compaction_script_emits_additional_context(tmp_path, monkeypatch):

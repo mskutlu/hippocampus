@@ -51,6 +51,8 @@ def _install_dir_for(client: str) -> Path:
     exactly one source-of-truth location for the script files.
     """
     home = Path.home()
+    if client == "antigravity":
+        return home / ".gemini" / "antigravity" / "hooks" / HOOKS_DIRNAME
     return home / ".config" / "devin" / HOOKS_DIRNAME / client
 
 
@@ -235,8 +237,37 @@ def install_for_claude_code() -> dict[str, Any]:
     return {"client": client, "config": str(cfg_path), "scripts": [str(start_path), str(submit_path)]}
 
 
+def install_for_antigravity() -> dict[str, Any]:
+    """Install hooks into ~/.gemini/antigravity/settings.json.
+
+    Antigravity gets SessionStart + UserPromptSubmit.
+    """
+    client = "antigravity"
+    hooks_dir = _install_dir_for(client)
+    start_path = _render_script("session-start", client, hooks_dir / "session-start.sh")
+    submit_path = _render_script("user-prompt-submit", client, hooks_dir / "user-prompt-submit.sh")
+
+    cfg_path = Path.home() / ".gemini" / "antigravity" / "settings.json"
+    _backup(cfg_path)
+    cfg = _load_json(cfg_path)
+    cfg["hooks"] = _merge_hooks(
+        cfg.get("hooks", {}),
+        _build_claude_format_entries(client, start_path, submit_path),
+    )
+    _write_json(cfg_path, cfg)
+    return {
+        "client": client,
+        "config": str(cfg_path),
+        "scripts": [str(start_path), str(submit_path)],
+    }
+
+
 def install_all() -> list[dict[str, Any]]:
-    return [install_for_devin(), install_for_claude_code()]
+    return [
+        install_for_devin(),
+        install_for_claude_code(),
+        install_for_antigravity(),
+    ]
 
 
 def uninstall_all() -> list[dict[str, Any]]:
@@ -244,6 +275,7 @@ def uninstall_all() -> list[dict[str, Any]]:
     for cfg_path in (
         Path.home() / ".config" / "devin" / "config.json",
         Path.home() / ".claude" / "settings.json",
+        Path.home() / ".gemini" / "antigravity" / "settings.json",
     ):
         if not cfg_path.exists():
             results.append({"config": str(cfg_path), "status": "missing"})
@@ -262,6 +294,9 @@ def status() -> list[dict[str, Any]]:
     Devin reports SessionStart + UserPromptSubmit + PostCompaction.
     Claude Code reports SessionStart + UserPromptSubmit only — its
     PostCompact event doesn't accept our output type.
+    Pi reports session_start + before_agent_start + session_shutdown,
+    which are wired by the bundled TypeScript extension (not a shell
+    hook), so "installed" here means the extension file exists.
     """
     reports: list[dict[str, Any]] = []
     for client, cfg_path, expected_events in (
@@ -275,6 +310,11 @@ def status() -> list[dict[str, Any]]:
             Path.home() / ".claude" / "settings.json",
             ("SessionStart", "UserPromptSubmit"),
         ),
+        (
+            "antigravity",
+            Path.home() / ".gemini" / "antigravity" / "settings.json",
+            ("SessionStart", "UserPromptSubmit"),
+        ),
     ):
         data = _load_json(cfg_path) if cfg_path.exists() else {}
         events = (data.get("hooks") or {})
@@ -283,4 +323,17 @@ def status() -> list[dict[str, Any]]:
             for ev in expected_events
         }
         reports.append({"client": client, "config": str(cfg_path), "installed": installed})
+
+    # Pi — extension-based, not shell-hook-based.
+    pi_index = Path.home() / ".pi" / "agent" / "extensions" / "hippocampus" / "index.ts"
+    pi_installed = pi_index.exists()
+    reports.append({
+        "client": "pi",
+        "config": str(pi_index.parent),
+        "installed": {
+            "session_start": pi_installed,
+            "before_agent_start": pi_installed,
+            "session_shutdown": pi_installed,
+        },
+    })
     return reports

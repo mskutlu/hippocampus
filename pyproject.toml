@@ -1,7 +1,7 @@
 [project]
 name = "hippocampus"
 version = "0.1.0"
-description = "Shared biologically-inspired long-term memory for AI assistants (Devin, Claude Code, OpenCode, Windsurf, Antigravity)"
+description = "Shared biologically-inspired long-term memory for AI assistants (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

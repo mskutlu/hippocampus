@@ -25,7 +25,7 @@ class ClientSpec:
     rules_path: Path                # file receiving the injection block
     creation_header: str            # header used when creating a fresh rules file
     mcp_config_path: Path | None    # where to register the MCP server (optional)
-    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json'
+    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'codex-toml' | 'pi-extension'
 
     @property
     def exists(self) -> bool:
@@ -105,6 +105,28 @@ CLIENTS: list[ClientSpec] = [
         creation_header=_VSCODE_COPILOT_HEADER,
         mcp_config_path=_vscode_user_dir() / "mcp.json",
         mcp_config_format="vscode-mcp-json",
+    ),
+    ClientSpec(
+        name="codex",
+        label="Codex",
+        rules_path=HOME / ".codex" / "AGENTS.md",
+        creation_header="# Codex Global Instructions",
+        mcp_config_path=HOME / ".codex" / "config.toml",
+        mcp_config_format="codex-toml",
+    ),
+    # Pi (@earendil-works/pi-coding-agent) deliberately ships without native MCP
+    # support — capabilities are added via TypeScript extensions auto-discovered
+    # under ~/.pi/agent/extensions/. We "register" by installing the bundled
+    # `hippocampus` extension dir (spawns the Hippocampus MCP server and re-exposes
+    # all 13 tools through pi.registerTool() + auto-trigger session_start /
+    # user_message hooks).
+    ClientSpec(
+        name="pi",
+        label="Pi Agent",
+        rules_path=HOME / ".pi" / "agent" / "AGENTS.md",
+        creation_header="# Pi Agent Global Rules",
+        mcp_config_path=HOME / ".pi" / "agent" / "extensions" / "hippocampus",
+        mcp_config_format="pi-extension",
     ),
 ]
 
