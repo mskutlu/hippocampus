@@ -42,6 +42,7 @@
 │   always-on rules file:                                       │
 │   ~/.config/devin/AGENTS.md                                   │
 │   ~/.claude/CLAUDE.md                                         │
+│   ~/.cursor/rules/hippocampus.mdc                             │
 │   ~/.codex/AGENTS.md                                          │
 │   ~/.config/opencode/AGENTS.md                                │
 │   ~/.codeium/windsurf/memories/global_rules.md                │

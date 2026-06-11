@@ -18,16 +18,19 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
     results = hooks.install_all()
-    assert len(results) == 3
+    assert len(results) == 4
 
-    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 2; Antigravity gets 2.
+    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 2;
+    # Antigravity gets 2; Cursor gets 2.
     devin_result = next(r for r in results if r["client"] == "devin")
     claude_result = next(r for r in results if r["client"] == "claude-code")
     antigravity_result = next(r for r in results if r["client"] == "antigravity")
+    cursor_result = next(r for r in results if r["client"] == "cursor")
     assert len(devin_result["scripts"]) == 3
     assert any("post-compaction" in s for s in devin_result["scripts"])
     assert len(claude_result["scripts"]) == 2
     assert len(antigravity_result["scripts"]) == 2
+    assert len(cursor_result["scripts"]) == 2
 
     for r in results:
         for script in r["scripts"]:
@@ -62,6 +65,21 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     assert "UserPromptSubmit" in antigravity_hooks
     assert "PostCompaction" not in antigravity_hooks
 
+    # Cursor check — flat command-dict schema, camelCase events, version field.
+    cursor_cfg = json.loads((fake_home / ".cursor" / "hooks.json").read_text())
+    assert cursor_cfg.get("version") == 1
+    cursor_hooks = cursor_cfg.get("hooks", {})
+    assert "sessionStart" in cursor_hooks
+    assert "beforeSubmitPrompt" in cursor_hooks
+    # Cursor has no PostCompaction-style injection event we use.
+    for evt in ("sessionStart", "beforeSubmitPrompt"):
+        entries = cursor_hooks[evt]
+        assert len(entries) == 1
+        # Flat shape: command lives directly on the entry, not in a nested list.
+        assert "/opt/fake/bin/hippo" not in entries[0]["command"]  # baked into script, not config
+        assert entries[0]["tag"] == "hippocampus-v1"
+        assert "session-start.sh" in entries[0]["command"] or "before-submit.sh" in entries[0]["command"]
+
 
 def test_install_is_idempotent(tmp_path, monkeypatch):
     from hippocampus.clients import hooks
@@ -77,6 +95,11 @@ def test_install_is_idempotent(tmp_path, monkeypatch):
     for evt in ("SessionStart", "UserPromptSubmit", "PostCompaction"):
         assert len(devin_cfg["hooks"][evt]) == 1
         assert len(devin_cfg["hooks"][evt][0]["hooks"]) == 1
+
+    # Cursor must also be idempotent (flat schema).
+    cursor_cfg = json.loads((fake_home / ".cursor" / "hooks.json").read_text())
+    for evt in ("sessionStart", "beforeSubmitPrompt"):
+        assert len(cursor_cfg["hooks"][evt]) == 1
 
 
 def test_uninstall_removes_only_hippocampus(tmp_path, monkeypatch):
@@ -115,8 +138,8 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
     report = hooks.status()
-    # devin + claude-code (shell hooks) + antigravity (shell hooks) + pi (TS extension)
-    assert len(report) == 4
+    # devin + claude-code + antigravity + cursor (shell hooks) + pi (TS extension)
+    assert len(report) == 5
     for r in report:
         for ev, installed in r["installed"].items():
             assert installed is False, f"unexpected initial install: {r['client']}/{ev}"
@@ -126,6 +149,7 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     devin = next(r for r in report_after if r["client"] == "devin")
     claude = next(r for r in report_after if r["client"] == "claude-code")
     antigravity = next(r for r in report_after if r["client"] == "antigravity")
+    cursor = next(r for r in report_after if r["client"] == "cursor")
     pi = next(r for r in report_after if r["client"] == "pi")
 
     assert devin["installed"]["SessionStart"] is True
@@ -140,6 +164,11 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
     assert antigravity["installed"]["SessionStart"] is True
     assert antigravity["installed"]["UserPromptSubmit"] is True
     assert "PostCompaction" not in antigravity["installed"]
+
+    assert cursor["installed"]["sessionStart"] is True
+    assert cursor["installed"]["beforeSubmitPrompt"] is True
+    # Cursor has no PostCompaction / UserPromptSubmit context-injection event.
+    assert "PostCompaction" not in cursor["installed"]
 
     # Pi hooks live inside the TypeScript extension — install_all only handles
     # Devin + Claude Code + Antigravity shell hooks, so Pi stays False until `hippo register`.

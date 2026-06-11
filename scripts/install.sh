@@ -116,9 +116,9 @@ esac
 
 # ---------------------------------------------------------------------------
 # 4. Register MCP server in all clients (all platforms)
-#    For Devin / Claude Code / OpenCode / Windsurf / Antigravity / VS Code
-#    Copilot this drops an entry into the client's MCP config JSON. For Codex
-#    this updates ~/.codex/config.toml. For Pi
+#    For Devin / Claude Code / Cursor / OpenCode / Windsurf / Antigravity /
+#    VS Code Copilot this drops an entry into the client's MCP config JSON. For
+#    Codex this updates ~/.codex/config.toml. For Pi
 #    (which has no native MCP) this installs the bundled TypeScript
 #    extension at ~/.pi/agent/extensions/hippocampus/.
 # ---------------------------------------------------------------------------

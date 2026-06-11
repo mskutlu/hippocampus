@@ -53,6 +53,8 @@ def _install_dir_for(client: str) -> Path:
     home = Path.home()
     if client == "antigravity":
         return home / ".gemini" / "antigravity" / "hooks" / HOOKS_DIRNAME
+    if client == "cursor":
+        return home / ".cursor" / "hooks" / HOOKS_DIRNAME
     return home / ".config" / "devin" / HOOKS_DIRNAME / client
 
 
@@ -149,6 +151,55 @@ def _build_claude_format_entries(
             }
         ]
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Cursor hooks (~/.cursor/hooks.json)
+#
+# Cursor's schema differs from the Claude-Code family:
+#   - `{"version": 1, "hooks": {<event>: [{"command": "..."}]}}`
+#   - event names are camelCase: `sessionStart`, `beforeSubmitPrompt`, ...
+#   - entries are flat command dicts (no nested "hooks" array)
+#   - only `sessionStart` supports context injection (`additional_context`);
+#     `beforeSubmitPrompt` is side-effect-only (logs the ask + autoremember).
+# Unknown keys (like our `tag`) are ignored by Cursor, so we tag entries for
+# clean, surgical removal.
+# ---------------------------------------------------------------------------
+
+
+def _build_cursor_entries(client: str, start_path: Path, submit_path: Path) -> dict[str, Any]:
+    return {
+        "sessionStart": [
+            {"command": f"bash {start_path} {client}", "timeout": 10, "tag": HOOK_TAG}
+        ],
+        "beforeSubmitPrompt": [
+            {"command": f"bash {submit_path} {client}", "timeout": 10, "tag": HOOK_TAG}
+        ],
+    }
+
+
+def _cursor_entry_is_ours(entry: dict) -> bool:
+    if entry.get("tag") == HOOK_TAG:
+        return True
+    return HOOKS_DIRNAME in entry.get("command", "")
+
+
+def _merge_cursor_hooks(existing: dict, new_entries: dict) -> dict:
+    merged = dict(existing or {})
+    for event, entries in new_entries.items():
+        bucket = [e for e in list(merged.get(event, [])) if not _cursor_entry_is_ours(e)]
+        bucket.extend(entries)
+        merged[event] = bucket
+    return merged
+
+
+def _strip_cursor_hooks(existing: dict) -> dict:
+    cleaned: dict = {}
+    for event, entries in (existing or {}).items():
+        kept = [e for e in entries if not _cursor_entry_is_ours(e)]
+        if kept:
+            cleaned[event] = kept
+    return cleaned
 
 
 def _merge_hooks(existing: dict, new_entries: dict) -> dict:
@@ -262,11 +313,39 @@ def install_for_antigravity() -> dict[str, Any]:
     }
 
 
+def install_for_cursor() -> dict[str, Any]:
+    """Install hooks into ~/.cursor/hooks.json.
+
+    Cursor gets sessionStart + beforeSubmitPrompt. sessionStart injects the
+    memory protocol + live working ledger + top fragments via
+    `additional_context` (the only Cursor event that supports injection).
+    beforeSubmitPrompt is side-effect-only — it logs the ask and runs
+    autoremember so the always-on ~/.cursor/rules/hippocampus.mdc rule stays
+    current; Cursor's beforeSubmitPrompt output schema cannot inject context.
+    """
+    client = "cursor"
+    hooks_dir = _install_dir_for(client)
+    start_path = _render_script("cursor-session-start", client, hooks_dir / "session-start.sh")
+    submit_path = _render_script("cursor-before-submit", client, hooks_dir / "before-submit.sh")
+
+    cfg_path = Path.home() / ".cursor" / "hooks.json"
+    _backup(cfg_path)
+    cfg = _load_json(cfg_path)
+    cfg.setdefault("version", 1)
+    cfg["hooks"] = _merge_cursor_hooks(
+        cfg.get("hooks", {}),
+        _build_cursor_entries(client, start_path, submit_path),
+    )
+    _write_json(cfg_path, cfg)
+    return {"client": client, "config": str(cfg_path), "scripts": [str(start_path), str(submit_path)]}
+
+
 def install_all() -> list[dict[str, Any]]:
     return [
         install_for_devin(),
         install_for_claude_code(),
         install_for_antigravity(),
+        install_for_cursor(),
     ]
 
 
@@ -285,6 +364,17 @@ def uninstall_all() -> list[dict[str, Any]]:
         cfg["hooks"] = _strip_hooks(cfg.get("hooks", {}))
         _write_json(cfg_path, cfg)
         results.append({"config": str(cfg_path), "status": "stripped"})
+
+    # Cursor uses its own flat schema — strip with the Cursor-aware helper.
+    cursor_cfg = Path.home() / ".cursor" / "hooks.json"
+    if not cursor_cfg.exists():
+        results.append({"config": str(cursor_cfg), "status": "missing"})
+    else:
+        _backup(cursor_cfg)
+        cfg = _load_json(cursor_cfg)
+        cfg["hooks"] = _strip_cursor_hooks(cfg.get("hooks", {}))
+        _write_json(cursor_cfg, cfg)
+        results.append({"config": str(cursor_cfg), "status": "stripped"})
     return results
 
 
@@ -323,6 +413,20 @@ def status() -> list[dict[str, Any]]:
             for ev in expected_events
         }
         reports.append({"client": client, "config": str(cfg_path), "installed": installed})
+
+    # Cursor — flat command-dict schema; only sessionStart can inject context,
+    # beforeSubmitPrompt is side-effect-only. No PostCompaction equivalent.
+    cursor_cfg = Path.home() / ".cursor" / "hooks.json"
+    cursor_data = _load_json(cursor_cfg) if cursor_cfg.exists() else {}
+    cursor_events = (cursor_data.get("hooks") or {})
+    reports.append({
+        "client": "cursor",
+        "config": str(cursor_cfg),
+        "installed": {
+            ev: any(_cursor_entry_is_ours(e) for e in cursor_events.get(ev, []))
+            for ev in ("sessionStart", "beforeSubmitPrompt")
+        },
+    })
 
     # Pi — extension-based, not shell-hook-based.
     pi_index = Path.home() / ".pi" / "agent" / "extensions" / "hippocampus" / "index.ts"

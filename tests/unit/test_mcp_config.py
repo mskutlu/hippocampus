@@ -48,6 +48,47 @@ def test_register_vscode_copilot_uses_vscode_schema(tmp_path, monkeypatch):
     assert mcp_config.is_registered(spec) is True
 
 
+def test_register_cursor_uses_mcp_servers_schema(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("HIPPOCAMPUS_MCP_CMD", "/opt/fake/bin/hippocampus-mcp")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _reload_clients_modules()
+
+    from hippocampus.clients import mcp_config, registry
+
+    importlib.reload(registry)
+    importlib.reload(mcp_config)
+
+    spec = registry.by_name("cursor")
+    assert spec is not None
+    assert spec.mcp_config_format == "cursor-mcp-json"
+    assert spec.rules_path == fake_home / ".cursor" / "rules" / "hippocampus.mdc"
+    assert spec.mcp_config_path == fake_home / ".cursor" / "mcp.json"
+    assert "alwaysApply: true" in spec.creation_header
+
+    changed, _ = mcp_config.register(spec)
+    assert changed is True
+
+    data = json.loads(spec.mcp_config_path.read_text(encoding="utf-8"))
+    entry = data["mcpServers"]["hippocampus"]
+    assert entry["command"] == "/opt/fake/bin/hippocampus-mcp"
+    assert entry["env"]["HIPPOCAMPUS_CLIENT"] == "cursor"
+    # Cursor uses the bare mcpServers shape (no "type": "stdio" wrapper).
+    assert "type" not in entry
+    assert mcp_config.is_registered(spec) is True
+
+    # Idempotent + surgical unregister.
+    changed_again, _ = mcp_config.register(spec)
+    assert changed_again is False
+    removed, _ = mcp_config.unregister(spec)
+    assert removed is True
+    assert mcp_config.is_registered(spec) is False
+
+
 def test_register_codex_uses_config_toml(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
