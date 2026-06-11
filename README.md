@@ -1,7 +1,7 @@
 # Hippocampus
 
 > Shared biologically-inspired long-term **and** short-term memory for AI assistants.
-> One backend, auto-injected into Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, and Pi.
+> One backend, auto-injected into Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, and Pi.
 
 The human brain does not record everything — it synthesizes, distills, and leaves behind fragments.
 Frequently accessed knowledge grows stronger; unused knowledge fades and is forgotten.
@@ -85,8 +85,8 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
 1. Runs `uv sync` and installs the `hippo` CLI into a repo-local `.venv/`.
 2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
 3. Installs periodic jobs **on macOS only** (launchd agents: hourly decay, 10-minute inject, daily archive). On Linux / WSL it prints the `crontab -e` lines to paste. On Windows-native it points you at Task Scheduler.
-4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot). For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all 13 tools through `pi.registerTool()`.
-5. Writes the first injection block into each client's rules file. For Codex this is `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
+4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot). For Cursor this is `~/.cursor/mcp.json`. For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all 13 tools through `pi.registerTool()`.
+5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
 ### Linux / WSL — setting up cron
@@ -138,26 +138,35 @@ hippo embeddings bench \
   --queries my-queries.jsonl
 ```
 
-### Auto-trigger in Devin + Claude Code + Antigravity + Pi
+### Auto-trigger in Devin + Claude Code + Cursor + Antigravity + Pi
 
 ```bash
-hippo install-hooks     # registers Devin + Claude Code + Antigravity shell hooks
+hippo install-hooks     # registers Devin + Claude Code + Cursor + Antigravity shell hooks
 hippo register          # installs the Pi extension (covers Pi's lifecycle)
 ```
 
-| Hook | Devin | Claude Code | Antigravity | Pi | What it does (v1.5+) |
-|---|---|---|---|---|---|
-| `SessionStart` / `session_start` | ✓ | ✓ | ✓ | ✓ | Opens a Hippocampus session and injects the memory protocol **+ the live working ledger + top long-term fragments** as `additionalContext`. The AI sees real state from turn 0 instead of whatever the rules file happened to hold. |
-| `UserPromptSubmit` / `before_agent_start` | ✓ | ✓ | ✓ | ✓ | Logs the user prompt as `kind="ask"` AND re-injects the live working block + top fragments matching the prompt. This is the universal compaction-safety mechanism — the next user message after a compaction always carries a fresh snapshot. On Pi this happens inside `before_agent_start` by chaining the live context onto the system prompt. |
-| `PostCompaction` | ✓ | — | — | — | Devin-only. Runs `hippo inject` to refresh the rules file, then injects the live context as `additionalContext`. Claude Code's `PostCompact` event doesn't accept `additionalContext` yet (community issues open); coverage on Claude Code comes from `UserPromptSubmit` instead. Pi's auto-compaction goes through the same `before_agent_start` re-injection on the very next turn, so the model never sees a stale snapshot either. |
+| Hook | Devin | Claude Code | Cursor | Antigravity | Pi | What it does (v1.5+) |
+|---|---|---|---|---|---|---|
+| `SessionStart` / `sessionStart` / `session_start` | ✓ | ✓ | ✓ | ✓ | ✓ | Opens a Hippocampus session and injects the memory protocol **+ the live working ledger + top long-term fragments** as context. The AI sees real state from turn 0 instead of whatever the rules file happened to hold. On Cursor this uses the `sessionStart` hook's `additional_context` field — the one Cursor event that supports context injection. |
+| `UserPromptSubmit` / `beforeSubmitPrompt` / `before_agent_start` | ✓ | ✓ | ⚠︎ | ✓ | ✓ | Logs the user prompt as `kind="ask"` AND (on Devin/Claude/Antigravity/Pi) re-injects the live working block + top fragments matching the prompt. **Cursor caveat:** its `beforeSubmitPrompt` output schema is `{continue, user_message}` only and cannot inject context, so on Cursor this hook is side-effect-only (logs the ask + runs autoremember). Per-turn memory in Cursor surfaces via the always-on `~/.cursor/rules/hippocampus.mdc` rule and the MCP `recall` tool instead. |
+| `PostCompaction` | ✓ | — | — | — | — | Devin-only. Runs `hippo inject` to refresh the rules file, then injects the live context as `additionalContext`. Claude Code's `PostCompact` event doesn't accept `additionalContext` yet (community issues open); coverage on Claude Code comes from `UserPromptSubmit` instead. Cursor's `preCompact` is observational only; coverage comes from the always-on rule + next `sessionStart`. Pi's auto-compaction goes through the same `before_agent_start` re-injection on the very next turn. |
 
-Pi's hooks are not shell scripts — they live inside the bundled TypeScript extension installed by `hippo register`. Running `hippo install-hooks` after that is harmless (it only touches Devin, Claude Code, and Antigravity).
+Pi's hooks are not shell scripts — they live inside the bundled TypeScript extension installed by `hippo register`. Running `hippo install-hooks` after that is harmless (it only touches Devin, Claude Code, Cursor, and Antigravity).
 
 Before 1.5.0 the WORKING block was kept up-to-date on disk but the AI client only re-read the rules file at session start, so after a compaction the model was looking at a stale snapshot. Re-run `hippo install-hooks` after upgrading to pick up the new behaviour, and **restart your AI client** so it reloads its config.
 
 Hook auto-install works on macOS, Linux, and WSL (the hooks are bash scripts). Native Windows users need to translate them into PowerShell or run Devin inside WSL.
 
 Token cost is bounded: each hook payload is capped at `hook_inject_budget_chars` (default 3500 chars ≈ 800 tokens). Adjust or disable per layer with `hippo config set hook_inject_working false` / `hook_inject_fragments false` / `hook_fragment_limit 3` / `hook_inject_budget_chars 2000`.
+
+### Cursor
+
+`hippo register` adds Hippocampus to `~/.cursor/mcp.json` as an `mcpServers.hippocampus` entry tagged with `HIPPOCAMPUS_CLIENT=cursor`. `hippo inject` writes the long-term and working-memory marker blocks into `~/.cursor/rules/hippocampus.mdc`, an always-on project-rule file (`alwaysApply: true`) Cursor includes in every chat. `hippo install-hooks` wires `~/.cursor/hooks.json`:
+
+- `sessionStart` — opens a session and injects the protocol + live ledger + top fragments via `additional_context`.
+- `beforeSubmitPrompt` — side-effect-only (logs the ask, runs autoremember). Cursor's `beforeSubmitPrompt` cannot inject context, so per-turn recall comes from the always-on rule and the MCP `recall` tool.
+
+After installing, **restart Cursor** so it reloads `mcp.json`, the rule file, and `hooks.json`. Recent Cursor versions load global `~/.cursor/rules/*.mdc` rules across projects; if your version doesn't pick it up, copy or symlink `~/.cursor/rules/hippocampus.mdc` into a project's `.cursor/rules/`, or rely on the `sessionStart` hook + MCP `recall` (both work regardless). The `hooks.json` integration is the officially-supported global path and always applies.
 
 ### Codex
 
@@ -177,6 +186,7 @@ OK  Vault mirror OK …
 OK  Injection file OK …
 OK  Devin CLI      long:✓ working:✓ mcp:✓
 OK  Claude Code    long:✓ working:✓ mcp:✓
+OK  Cursor         long:✓ working:✓ mcp:✓
 OK  Codex          long:✓ working:✓ mcp:✓
 OK  OpenCode       long:✓ working:✓ mcp:✓
 OK  Windsurf       long:✓ working:✓ mcp:✓
@@ -188,6 +198,7 @@ OK  settings: working_block_mode=per_client …
 OK  embeddings: N/N covered (model=…, dim=…)      # only if [semantic] installed
 OK  hooks/devin       SessionStart:✓ UserPromptSubmit:✓ PostCompaction:✓  # only if you ran hippo install-hooks
 OK  hooks/claude-code SessionStart:✓ UserPromptSubmit:✓
+OK  hooks/cursor      sessionStart:✓ beforeSubmitPrompt:✓
 OK  hooks/antigravity SessionStart:✓ UserPromptSubmit:✓
 OK  hooks/pi          session_start:✓ before_agent_start:✓ session_shutdown:✓  # via the bundled extension
 ```
@@ -228,7 +239,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ AI Clients (via MCP stdio)                                   │
-│  Devin · Claude Code · Codex · OpenCode · Windsurf           │
+│  Devin · Claude Code · Cursor · Codex · OpenCode · Windsurf  │
 │  · Antigravity · VS Code Copilot · Pi (via extension)        │
 └───────────────────────┬──────────────────────────────────────┘
                         │
@@ -273,6 +284,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 │ Files:                                                       │
 │   ~/.config/devin/AGENTS.md                                  │
 │   ~/.claude/CLAUDE.md                                        │
+│   ~/.cursor/rules/hippocampus.mdc                            │
 │   ~/.codex/AGENTS.md                                         │
 │   ~/.config/opencode/AGENTS.md                               │
 │   ~/.codeium/windsurf/memories/global_rules.md               │

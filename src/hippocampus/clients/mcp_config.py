@@ -169,7 +169,7 @@ def _server_bucket(data: dict, fmt: str) -> dict[str, Any] | None:
     if fmt == "vscode-mcp-json":
         data.setdefault("servers", {})
         return data["servers"]
-    if fmt in ("devin-json", "claude-json", "windsurf-mcp", "opencode-json"):
+    if fmt in ("devin-json", "claude-json", "windsurf-mcp", "opencode-json", "cursor-mcp-json"):
         data.setdefault("mcpServers", {})
         return data["mcpServers"]
     return None

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Cursor support
+
+Hippocampus now ships as a first-class client for [Cursor](https://cursor.com).
+
+- **New `cursor` client** (`src/hippocampus/clients/registry.py`): rules file
+  `~/.cursor/rules/hippocampus.mdc` (an always-on `.mdc` rule with
+  `alwaysApply: true`), MCP config `~/.cursor/mcp.json`.
+- **New `cursor-mcp-json` MCP registration format** — writes the standard
+  `mcpServers.hippocampus` entry (with `HIPPOCAMPUS_CLIENT="cursor"`) into
+  `~/.cursor/mcp.json`, preserving any existing servers; idempotent + surgical
+  unregister.
+- **Cursor lifecycle hooks** (`~/.cursor/hooks.json`, installed by
+  `hippo install-hooks`):
+  - `sessionStart` → injects the memory protocol + live working ledger + top
+    fragments via Cursor's `additional_context` output field.
+  - `beforeSubmitPrompt` → side-effect-only (logs the ask + runs autoremember);
+    Cursor's `beforeSubmitPrompt` schema is `{continue, user_message}` and
+    cannot inject context, so per-turn recall comes from the always-on rule and
+    the MCP `recall` tool.
+  - Cursor uses its own flat hooks schema (`{"version":1,"hooks":{<event>:[{"command":…}]}}`)
+    with camelCase event names; install/uninstall/status are Cursor-aware and
+    only touch our tagged entries.
+- New hook templates `scripts/hooks/cursor-session-start.sh.template` and
+  `scripts/hooks/cursor-before-submit.sh.template`.
+- Updated docs and tests to cover Cursor registration, injection, hook install
+  idempotency, surgical uninstall, and status reporting.
+
 ### Added — Codex support
 
 - Added a first-class `codex` client whose rules file is `~/.codex/AGENTS.md`

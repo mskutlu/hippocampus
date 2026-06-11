@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Hippocampus sessionStart hook for Cursor.
+#
+# Stdin: JSON from Cursor (session_id, model, workspace_roots, ... — ignored).
+# Stdout: JSON object `{ "additional_context": "<text>" }` — Cursor injects
+#         this into the conversation's initial system context. This is the
+#         one Cursor hook event that supports context injection.
+#
+# Cursor's sessionStart is fire-and-forget (the agent loop does not wait on a
+# blocking response), so we keep this fast and degrade to "{}" on any error.
+#
+# Note: Cursor's `beforeSubmitPrompt` hook output schema is `{continue,
+# user_message}` only — it cannot inject context. Per-turn memory in Cursor
+# therefore comes from (a) the always-on ~/.cursor/rules/hippocampus.mdc rule
+# and (b) the MCP `recall` tool. This hook seeds the session up front.
+
+set -uo pipefail
+
+CLIENT="${1:-cursor}"
+HIPPO_BIN="__HIPPO_BIN__"
+
+# Drain stdin so Cursor's writer never blocks on a full pipe.
+cat >/dev/null 2>&1 || true
+
+# Best-effort: open/rotate a session for this client so `hippo progress show`
+# reflects reality from turn 0.
+if [[ -x "$HIPPO_BIN" ]]; then
+    HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" session start --client "$CLIENT" >/dev/null 2>&1 || true
+fi
+
+# Static protocol text — what the AI sees on turn 0 even if the live render fails.
+PROTOCOL=$(cat <<'EOF'
+## Hippocampus memory is ACTIVE for this session.
+
+You have access to MCP tools for both long-term and working memory. Follow
+this protocol reflexively — the user should never have to ask you to use it:
+
+Working memory (short-term, per session):
+- After **every** user message, call log_progress(kind="ask", content="<one-line paraphrase>").
+- After **every** completed action, call log_progress(kind="done", content="<what you did>").
+- On decisions: log_progress(kind="decision", content="<decision>").
+- On blockers: log_progress(kind="blocker", content="<blocker>").
+- On planned next steps: log_progress(kind="next", content="<next>").
+- Call get_progress() if you need more detail than the WORKING block shows.
+
+Long-term memory (cross-session, cross-client):
+- Before answering anything domain-specific, call recall(query="...") to pull relevant fragments. Each recall boosts confidence on the hits.
+- When you learn something durable, call remember(content=..., summary=..., tags=[...], pinned=<bool>).
+- When a recalled fragment is wrong, call forget(fragment_id=..., reason=...).
+- At task completion, call end_progress(distill_to_fragment=true, summary="...") to rotate the session and condense the ledger into a long-term fragment.
+
+The top-N long-term fragments and the live working ledger are also kept in
+your always-on rules file (~/.cursor/rules/hippocampus.mdc) under the
+HIPPOCAMPUS marker blocks.
+EOF
+)
+
+# Live snapshot: working ledger + top-N fragments. May be empty for a fresh install.
+LIVE=""
+if [[ -x "$HIPPO_BIN" ]]; then
+    LIVE=$(HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" context --client "$CLIENT" --event SessionStart 2>/dev/null || true)
+fi
+
+CONTEXT="${PROTOCOL}"
+if [[ -n "$LIVE" ]]; then
+    CONTEXT="${PROTOCOL}
+
+---
+
+${LIVE}"
+fi
+
+python3 -c '
+import json, sys
+ctx = sys.stdin.read()
+print(json.dumps({"additional_context": ctx}))
+' <<< "$CONTEXT"
