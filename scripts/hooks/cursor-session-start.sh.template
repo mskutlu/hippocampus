@@ -19,6 +19,26 @@ set -uo pipefail
 CLIENT="${1:-cursor}"
 HIPPO_BIN="__HIPPO_BIN__"
 
+detect_hippo_context() {
+    if [[ -z "${HIPPOCAMPUS_TTY:-}" ]]; then
+        local tty_name
+        tty_name="$(tty 2>/dev/null || true)"
+        if [[ "$tty_name" == "not a tty" ]]; then
+            tty_name=""
+        fi
+        if [[ -z "$tty_name" ]]; then
+            tty_name="$(ps -o tty= -p "$PPID" 2>/dev/null | tr -d ' ' || true)"
+            if [[ "$tty_name" == "?" || "$tty_name" == "??" ]]; then
+                tty_name=""
+            fi
+        fi
+        export HIPPOCAMPUS_TTY="$tty_name"
+    fi
+    export HIPPOCAMPUS_CWD="${HIPPOCAMPUS_CWD:-${PWD:-}}"
+}
+
+detect_hippo_context
+
 # Drain stdin so Cursor's writer never blocks on a full pipe.
 cat >/dev/null 2>&1 || true
 

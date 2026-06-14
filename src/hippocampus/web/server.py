@@ -131,6 +131,12 @@ def create_app() -> "FastAPI":
     def api_stats() -> dict:
         return tools.get_stats()
 
+    @app.get("/api/health")
+    def api_health(duplicates: bool = False) -> dict:
+        from hippocampus import maintenance
+
+        return maintenance.health_snapshot(include_duplicates=duplicates)
+
     @app.get("/api/top")
     def api_top(limit: int | None = None) -> dict:
         return tools.top_fragments(limit=limit)

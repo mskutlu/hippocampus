@@ -39,6 +39,15 @@ def test_get_stats_is_open(web_client):
     assert "total_fragments" in r.json()
 
 
+def test_get_health_is_open(web_client):
+    client, _ = web_client
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    payload = r.json()
+    assert "sessions" in payload
+    assert "mirror" in payload
+
+
 def test_mutation_requires_token(web_client):
     client, token = web_client
     # Missing header → 403

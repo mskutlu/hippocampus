@@ -26,6 +26,7 @@ from hippocampus.storage import (
     fragments as frag_store,
     ledger as ledger_store,
     sessions,
+    transcript as transcript_store,
     feedback,
 )
 from hippocampus.sync import obsidian_mirror
@@ -321,7 +322,7 @@ def get_stats() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _refresh_working_block(client: str) -> None:
+def _refresh_working_block(client: str, session_key: str | None = None) -> None:
     """Regenerate the WORKING block for one client's rules file.
 
     Called after every `log_progress` so the block reflects the new state on
@@ -332,7 +333,7 @@ def _refresh_working_block(client: str) -> None:
     if spec is None:
         return
     try:
-        sid = sessions.current_session_id(client, open_if_missing=False)
+        sid = sessions.current_session_id(client, session_key=session_key, open_if_missing=False)
         entries = ledger_store.current_entries(sid)
         row = _session_row(sid)
         started_at = row["started_at"] if row else None
@@ -362,6 +363,39 @@ def _session_row(session_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _current_context(client_name: str) -> tuple[str, str]:
+    session_key = sessions.derive_session_key()
+    session_id = sessions.current_session_id(client_name, session_key=session_key, open_if_missing=True)
+    return session_id, session_key
+
+
+def _log_progress_transcript(
+    *,
+    session_id: str,
+    session_key: str,
+    client_name: str,
+    kind: str,
+    content: str,
+    details: str | None,
+) -> None:
+    if kind == "ask" and os.environ.get("HIPPOCAMPUS_TRANSCRIPT_PROMPT_LOGGED"):
+        return
+    role = "user" if kind == "ask" else ("reasoning_summary" if kind == "decision" else "assistant_summary")
+    full_content = content if not details else f"{content}\n\n{details}"
+    try:
+        transcript_store.log_entry(
+            session_id=session_id,
+            client=client_name,
+            session_key=session_key,
+            role=role,
+            content=full_content,
+            source_event=f"log_progress:{kind}",
+            metadata={"ledger_kind": kind},
+        )
+    except Exception:
+        pass
+
+
 def log_progress(
     kind: str,
     content: str,
@@ -379,7 +413,7 @@ def log_progress(
     client_name = (client or _client_from_env()).strip().lower()
     if not client_name or client_name == "unknown":
         client_name = "cli"
-    session_id = sessions.current_session_id(client_name, open_if_missing=True)
+    session_id, session_key = _current_context(client_name)
 
     entry = ledger_store.log_entry(
         session_id=session_id,
@@ -394,6 +428,15 @@ def log_progress(
             "reason": "duplicate_within_dedup_window",
             "session_id": session_id,
         }
+
+    _log_progress_transcript(
+        session_id=session_id,
+        session_key=session_key,
+        client_name=client_name,
+        kind=kind,
+        content=content,
+        details=details,
+    )
 
     # v1.6.0 — negation inference (B4). When the user pushes back at the start
     # of an ask, demote the most recent fragment we boosted in this session.
@@ -537,6 +580,64 @@ def get_progress(client: str | None = None, full: bool = False) -> dict[str, Any
     return {"client": client_name, "session_id": sid, "count": len(entries), "entries": payload}
 
 
+def log_transcript(
+    role: str,
+    content: str,
+    source_event: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    client: str | None = None,
+) -> dict[str, Any]:
+    """Store raw/visible transcript content for the current session.
+
+    This is for raw user prompts, visible assistant responses, tool/system
+    snippets, and explicit reasoning summaries. Hidden chain-of-thought should
+    never be stored; use role='reasoning_summary' for a concise visible
+    reasoning summary instead.
+    """
+    _ensure_bootstrapped()
+    client_name = (client or _client_from_env()).strip().lower()
+    if not client_name or client_name == "unknown":
+        client_name = "cli"
+    session_id, session_key = _current_context(client_name)
+    entry = transcript_store.log_entry(
+        session_id=session_id,
+        client=client_name,
+        session_key=session_key,
+        role=role,
+        content=content,
+        source_event=source_event,
+        metadata=metadata,
+    )
+    if entry is None:
+        return {
+            "logged": False,
+            "reason": "duplicate_within_dedup_window",
+            "session_id": session_id,
+            "session_key": session_key,
+        }
+    return {"logged": True, "entry": entry.to_dict()}
+
+
+def get_transcript(client: str | None = None, limit: int = 200) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    client_name = (client or _client_from_env()).strip().lower()
+    if not client_name or client_name == "unknown":
+        client_name = "cli"
+    session_key = sessions.derive_session_key()
+    try:
+        sid = sessions.current_session_id(client_name, session_key=session_key, open_if_missing=False)
+    except RuntimeError:
+        return {"client": client_name, "session_key": session_key, "session_id": None, "entries": []}
+    entries = transcript_store.current_entries(sid, limit=limit)
+    return {
+        "client": client_name,
+        "session_key": session_key,
+        "session_id": sid,
+        "count": len(entries),
+        "entries": [e.to_dict() for e in entries],
+    }
+
+
 def end_progress(
     distill_to_fragment: bool = False,
     summary: str | None = None,
@@ -628,7 +729,7 @@ def auto_end_idle_sessions() -> dict[str, Any]:
     min_entries = int(config.get_setting("auto_distill_min_entries") or 0)
 
     ended: list[dict[str, Any]] = []
-    for sid, client in sessions.idle_sessions(minutes_int):
+    for sid, client, session_key in sessions.idle_sessions(minutes_int):
         distilled_id: str | None = None
         try:
             entries = ledger_store.current_entries(sid)
@@ -655,11 +756,12 @@ def auto_end_idle_sessions() -> dict[str, Any]:
                 distilled_id = None
 
         sessions.close_session(sid)
-        sessions.open_session(client)
-        _refresh_working_block(client)
+        sessions.open_session(client, session_key=session_key)
+        _refresh_working_block(client, session_key=session_key)
         ended.append({
             "session_id": sid,
             "client": client,
+            "session_key": session_key,
             "entries": len(entries),
             "distilled_fragment_id": distilled_id,
         })
@@ -694,4 +796,3 @@ def _render_ledger_as_fragment(entries: list[ledger_store.LedgerEntry], *, expli
         lines.extend(items)
         lines.append("")
     return "\n".join(lines).strip()
-

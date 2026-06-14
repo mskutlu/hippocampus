@@ -38,12 +38,13 @@ def test_config_env_overrides_file(hippo_env, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Auto-tag fragments referenced in log_progress
+# Boost fragments referenced in log_progress
 # ---------------------------------------------------------------------------
 
 
 def test_log_progress_boosts_referenced_fragment(hippo_env, monkeypatch):
     from hippocampus.mcp import tools
+    from hippocampus.storage.db import get_ro_conn
 
     monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "devin")
     stored = tools.remember(content="Kafka consumers must be idempotent.")
@@ -58,7 +59,18 @@ def test_log_progress_boosts_referenced_fragment(hippo_env, monkeypatch):
     assert fid in out["boosted_fragments"]
     after = tools.get_fragment(fid, boost_on_read=False)["fragment"]["confidence"]
     assert after > before  # boosted
-    assert any(t.startswith("log_progress:done") for t in tools.get_fragment(fid, boost_on_read=False)["fragment"]["tags"])
+    frag = tools.get_fragment(fid, boost_on_read=False)["fragment"]
+    assert not any(t.startswith("log_progress:done") for t in frag["tags"])
+    with get_ro_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM feedback_log
+            WHERE fragment_id = ? AND kind = 'boost' AND reason = 'log_progress:done'
+            LIMIT 1
+            """,
+            (fid,),
+        ).fetchone()
+    assert row is not None
 
 
 def test_log_progress_ignores_unknown_fragment_id(hippo_env, monkeypatch):

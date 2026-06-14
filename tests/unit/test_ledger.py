@@ -82,6 +82,44 @@ def test_rotate_preserves_old_ledger(hippo_env):
     assert len(ledger.current_entries(sid1)) == 2
 
 
+def test_current_session_reuses_same_tty_context(hippo_env, monkeypatch):
+    from hippocampus.storage import sessions
+
+    monkeypatch.setenv("HIPPOCAMPUS_TTY", "/dev/ttys001")
+    monkeypatch.setenv("HIPPOCAMPUS_CWD", "/repo/worktree-a")
+
+    sid1 = sessions.current_session_id("codex")
+    sid2 = sessions.current_session_id("codex")
+
+    assert sid2 == sid1
+
+
+def test_current_session_separates_different_ttys(hippo_env, monkeypatch):
+    from hippocampus.storage import sessions
+
+    monkeypatch.setenv("HIPPOCAMPUS_CWD", "/repo/worktree-a")
+    monkeypatch.setenv("HIPPOCAMPUS_TTY", "/dev/ttys001")
+    sid1 = sessions.current_session_id("codex")
+
+    monkeypatch.setenv("HIPPOCAMPUS_TTY", "/dev/ttys002")
+    sid2 = sessions.current_session_id("codex")
+
+    assert sid2 != sid1
+
+
+def test_explicit_session_key_overrides_tty_context(hippo_env, monkeypatch):
+    from hippocampus.storage import sessions
+
+    monkeypatch.setenv("HIPPOCAMPUS_SESSION_KEY", "manual-task")
+    monkeypatch.setenv("HIPPOCAMPUS_TTY", "/dev/ttys001")
+    sid1 = sessions.current_session_id("codex")
+
+    monkeypatch.setenv("HIPPOCAMPUS_TTY", "/dev/ttys002")
+    sid2 = sessions.current_session_id("codex")
+
+    assert sid2 == sid1
+
+
 def test_resolve_flag(hippo_env):
     from hippocampus.storage import ledger, sessions
 

@@ -7,50 +7,228 @@ consult "was this fragment touched in the current or previous session?".
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
+import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ulid import ULID
 
 from hippocampus import config
 from hippocampus.storage.db import get_conn, get_ro_conn
 
+_TTY_CACHE: tuple[tuple[str | None, ...], str | None] | None = None
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _pointer_path(client: str):
+def _clean_client(client: str) -> str:
+    return client.strip().lower() or "unknown"
+
+
+def _safe_part(value: str, *, fallback: str = "default", limit: int = 80) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    cleaned = cleaned.strip(".-")
+    return (cleaned or fallback)[:limit]
+
+
+def _detect_tty() -> str | None:
+    """Best-effort TTY detection even when stdin/stdout are pipes."""
+    global _TTY_CACHE
+    cache_key = (
+        os.environ.get("HIPPOCAMPUS_TTY"),
+        os.environ.get("TTY"),
+        os.environ.get("SSH_TTY"),
+        os.environ.get("TERM_SESSION_ID"),
+        os.environ.get("WEZTERM_PANE"),
+        os.environ.get("TMUX_PANE"),
+        os.environ.get("STY"),
+        str(os.getpid()),
+    )
+    if _TTY_CACHE and _TTY_CACHE[0] == cache_key:
+        return _TTY_CACHE[1]
+
+    detected: str | None = None
+    for key in ("HIPPOCAMPUS_TTY", "TTY", "SSH_TTY"):
+        raw = os.environ.get(key)
+        if raw and raw.strip() and raw.strip().lower() != "not a tty":
+            detected = raw.strip()
+            _TTY_CACHE = (cache_key, detected)
+            return detected
+
+    for fd in (0, 1, 2):
+        try:
+            if os.isatty(fd):
+                detected = os.ttyname(fd)
+                _TTY_CACHE = (cache_key, detected)
+                return detected
+        except OSError:
+            pass
+
+    # MCP/hook children often have stdio pipes. Walk parents until we find
+    # the user's terminal TTY.
+    pid = os.getpid()
+    for _ in range(8):
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "ppid=", "-o", "tty=", "-p", str(pid)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.2,
+            ).stdout.strip()
+        except Exception:
+            break
+        if not out:
+            break
+        parts = out.split(None, 1)
+        if not parts:
+            break
+        try:
+            parent = int(parts[0])
+        except ValueError:
+            break
+        tty = parts[1].strip() if len(parts) > 1 else ""
+        if tty and tty not in {"?", "??"}:
+            detected = tty
+            _TTY_CACHE = (cache_key, detected)
+            return detected
+        if parent <= 1 or parent == pid:
+            break
+        pid = parent
+    _TTY_CACHE = (cache_key, detected)
+    return detected
+
+
+def _detect_cwd() -> str | None:
+    raw = os.environ.get("HIPPOCAMPUS_CWD") or os.environ.get("PWD")
+    try:
+        return str(Path(raw or os.getcwd()).resolve())
+    except OSError:
+        return raw or None
+
+
+def derive_session_key(session_key: str | None = None) -> str:
+    """Return the stable context key for this client process.
+
+    Precedence:
+      1. explicit argument / HIPPOCAMPUS_SESSION_KEY
+      2. terminal TTY or terminal-session env + cwd
+      3. cwd-only
+      4. "default" for non-terminal contexts with no cwd signal
+    """
+    explicit = (session_key or os.environ.get("HIPPOCAMPUS_SESSION_KEY") or "").strip()
+    if explicit:
+        return _safe_part(explicit)
+
+    tty = _detect_tty()
+    cwd = _detect_cwd()
+    term_hint = (
+        os.environ.get("TERM_SESSION_ID")
+        or os.environ.get("WEZTERM_PANE")
+        or os.environ.get("TMUX_PANE")
+        or os.environ.get("STY")
+    )
+
+    parts: list[str] = []
+    if tty:
+        parts.append(f"tty={tty}")
+    elif term_hint:
+        parts.append(f"term={term_hint}")
+    if cwd:
+        parts.append(f"cwd={cwd}")
+    if not parts:
+        return "default"
+
+    raw = "|".join(parts)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    labels: list[str] = []
+    if tty:
+        labels.append("tty-" + _safe_part(Path(tty).name or tty, fallback="tty", limit=24))
+    elif term_hint:
+        labels.append("term-" + _safe_part(term_hint, fallback="term", limit=24))
+    if cwd:
+        labels.append("cwd-" + _safe_part(Path(cwd).name or "cwd", fallback="cwd", limit=32))
+    prefix = "-".join(labels) or "ctx"
+    return _safe_part(f"{prefix}-{digest}", limit=120)
+
+
+def _pointer_path(client: str, session_key: str):
+    return config.SESSION_POINTER_DIR / _safe_part(client) / f"{_safe_part(session_key)}.id"
+
+
+def _legacy_pointer_path(client: str):
     return config.SESSION_POINTER_DIR / f"{client}.id"
 
 
-def open_session(client: str) -> str:
-    """Open a new session for a client and persist its id to the pointer file."""
-    client = client.strip().lower() or "unknown"
+def _active_session_exists(session_id: str, client: str, session_key: str) -> bool:
+    with get_ro_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM sessions
+            WHERE id = ? AND client = ? AND session_key = ? AND ended_at IS NULL
+            LIMIT 1
+            """,
+            (session_id, client, session_key),
+        ).fetchone()
+    return row is not None
+
+
+def _latest_open_session(client: str, session_key: str) -> str | None:
+    with get_ro_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id FROM sessions
+            WHERE client = ? AND session_key = ? AND ended_at IS NULL
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (client, session_key),
+        ).fetchone()
+    return row["id"] if row else None
+
+
+def open_session(client: str, session_key: str | None = None) -> str:
+    """Open a new session for a client/context and persist its pointer."""
+    client = _clean_client(client)
+    key = derive_session_key(session_key)
     config.ensure_dirs()
     sid = f"sess_{ULID()}"
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO sessions (id, client, started_at) VALUES (?, ?, ?)",
-            (sid, client, _now()),
+            "INSERT INTO sessions (id, client, session_key, started_at) VALUES (?, ?, ?, ?)",
+            (sid, client, key, _now()),
         )
-    _pointer_path(client).write_text(sid, encoding="utf-8")
+    pointer = _pointer_path(client, key)
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(sid, encoding="utf-8")
     return sid
 
 
-def rotate(client: str) -> str:
-    """Close the current session for `client` (if any) and open a fresh one.
+def ensure_session(client: str, session_key: str | None = None) -> str:
+    """Return the active session for client/context, opening one if needed."""
+    return current_session_id(client, session_key=session_key, open_if_missing=True)
+
+
+def rotate(client: str, session_key: str | None = None) -> str:
+    """Close the current session for `client`/context and open a fresh one.
 
     Used by `end_progress` and whenever the AI client starts a new task. The
     previous session's ledger is preserved (the rows are kept) but stops
     appearing in the rendered WORKING block.
     """
-    client_name = client.strip().lower() or "unknown"
+    client_name = _clean_client(client)
+    key = derive_session_key(session_key)
     try:
-        current = current_session_id(client_name, open_if_missing=False)
+        current = current_session_id(client_name, session_key=key, open_if_missing=False)
         close_session(current)
     except RuntimeError:
         pass
-    return open_session(client_name)
+    return open_session(client_name, session_key=key)
 
 
 def close_session(session_id: str) -> bool:
@@ -62,16 +240,37 @@ def close_session(session_id: str) -> bool:
         return cur.rowcount > 0
 
 
-def current_session_id(client: str, open_if_missing: bool = True) -> str:
-    """Return the active session id for a client. Opens one if none exists."""
-    p = _pointer_path(client.strip().lower() or "unknown")
+def current_session_id(
+    client: str,
+    session_key: str | None = None,
+    open_if_missing: bool = True,
+) -> str:
+    """Return the active session id for a client/context. Opens one if needed."""
+    client_name = _clean_client(client)
+    key = derive_session_key(session_key)
+    p = _pointer_path(client_name, key)
     if p.exists():
         sid = p.read_text(encoding="utf-8").strip()
-        if sid:
+        if sid and _active_session_exists(sid, client_name, key):
             return sid
+    elif key == "default":
+        legacy = _legacy_pointer_path(client_name)
+        if legacy.exists():
+            sid = legacy.read_text(encoding="utf-8").strip()
+            if sid and _active_session_exists(sid, client_name, key):
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(sid, encoding="utf-8")
+                return sid
+
+    latest = _latest_open_session(client_name, key)
+    if latest:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(latest, encoding="utf-8")
+        return latest
+
     if open_if_missing:
-        return open_session(client)
-    raise RuntimeError(f"No active session for client={client!r}")
+        return open_session(client_name, session_key=key)
+    raise RuntimeError(f"No active session for client={client_name!r} session_key={key!r}")
 
 
 def log_access(session_id: str, fragment_id: str) -> None:
@@ -123,8 +322,8 @@ def accessed_fragment_ids_in_sessions(session_ids: list[str]) -> set[str]:
     return {r["fragment_id"] for r in rows}
 
 
-def idle_sessions(idle_minutes: int) -> list[tuple[str, str]]:
-    """Return (session_id, client) for open sessions with no ledger activity in `idle_minutes`.
+def idle_sessions(idle_minutes: int) -> list[tuple[str, str, str]]:
+    """Return (session_id, client, session_key) for idle open sessions.
 
     Uses the most recent timestamp across session_accesses AND session_ledger
     so either "read" or "write" activity keeps the session alive.
@@ -135,7 +334,7 @@ def idle_sessions(idle_minutes: int) -> list[tuple[str, str]]:
     with get_ro_conn() as conn:
         rows = conn.execute(
             """
-            SELECT s.id, s.client
+            SELECT s.id, s.client, s.session_key
             FROM sessions s
             WHERE s.ended_at IS NULL
               AND s.started_at < ?
@@ -149,4 +348,4 @@ def idle_sessions(idle_minutes: int) -> list[tuple[str, str]]:
             """,
             (cutoff, cutoff),
         ).fetchall()
-    return [(r["id"], r["client"]) for r in rows]
+    return [(r["id"], r["client"], r["session_key"]) for r in rows]
