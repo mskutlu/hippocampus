@@ -81,3 +81,19 @@ def test_end_progress_rotates_and_optionally_distills(hippo_env, monkeypatch):
     # New session is clean
     new_sid = out["new_session_id"]
     assert ledger.current_entries(new_sid) == []
+
+
+def test_end_progress_uses_cli_for_unknown_env_client(hippo_env, monkeypatch):
+    from hippocampus.mcp import tools
+
+    monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "unknown")
+    tools.log_progress(kind="done", content="Updated docs")
+
+    shown = tools.get_progress()
+    assert shown["client"] == "cli"
+    assert shown["count"] == 1
+
+    out = tools.end_progress(distill_to_fragment=True, summary="CLI docs update")
+    assert out["rotated"] is True
+    assert out["client"] == "cli"
+    assert out["distilled_fragment"] is not None

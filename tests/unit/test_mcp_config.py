@@ -89,6 +89,78 @@ def test_register_cursor_uses_mcp_servers_schema(tmp_path, monkeypatch):
     assert mcp_config.is_registered(spec) is False
 
 
+def test_register_opencode_uses_mcp_schema_and_removes_legacy_mcpservers(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("HIPPOCAMPUS_MCP_CMD", "/opt/fake/bin/hippocampus-mcp")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _reload_clients_modules()
+
+    from hippocampus.clients import mcp_config, registry
+
+    importlib.reload(registry)
+    importlib.reload(mcp_config)
+
+    spec = registry.by_name("opencode")
+    assert spec is not None
+    assert spec.mcp_config_format == "opencode-json"
+    assert spec.mcp_config_path == fake_home / ".config" / "opencode" / "opencode.json"
+
+    spec.mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
+    spec.mcp_config_path.write_text(
+        json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "mcp": {
+                    "existing": {
+                        "type": "local",
+                        "command": ["existing-mcp"],
+                        "enabled": True,
+                    }
+                },
+                "mcpServers": {
+                    "hippocampus": {
+                        "command": "/old/hippocampus-mcp",
+                        "args": [],
+                        "env": {"HIPPOCAMPUS_CLIENT": "opencode"},
+                    }
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    changed, _ = mcp_config.register(spec)
+    assert changed is True
+
+    data = json.loads(spec.mcp_config_path.read_text(encoding="utf-8"))
+    assert "mcpServers" not in data
+    assert "existing" in data["mcp"]
+    entry = data["mcp"]["hippocampus"]
+    assert entry == {
+        "type": "local",
+        "enabled": True,
+        "timeout": 30000,
+        "command": ["/opt/fake/bin/hippocampus-mcp"],
+        "environment": {"HIPPOCAMPUS_CLIENT": "opencode"},
+    }
+    assert mcp_config.is_registered(spec) is True
+
+    changed_again, _ = mcp_config.register(spec)
+    assert changed_again is False
+
+    removed, _ = mcp_config.unregister(spec)
+    assert removed is True
+    data_after = json.loads(spec.mcp_config_path.read_text(encoding="utf-8"))
+    assert "hippocampus" not in data_after["mcp"]
+    assert "existing" in data_after["mcp"]
+
+
 def test_register_codex_uses_config_toml(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
