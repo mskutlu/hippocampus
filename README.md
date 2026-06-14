@@ -9,7 +9,7 @@ Meanwhile, working memory keeps the current task in focus.
 
 Hippocampus implements both as an external memory substrate for AI assistants.
 
-## Two memory layers
+## Memory layers
 
 ### Long-term memory — `recall` / `remember` / `forget` / `pin`
 
@@ -31,10 +31,22 @@ Hippocampus implements both as an external memory substrate for AI assistants.
   is regenerated immediately so the next turn sees the new entry.
 - **Survives compaction** because the WORKING block lives in the always-on
   rules file that every client re-injects after summarization.
-- **Per-client isolation** — Devin has its own ledger, Claude Code has its own.
+- **Context isolation** — sessions are scoped by client plus terminal/workspace
+  context, so two terminals using the same client do not share one ledger.
 - **60-second dedup** — safe to log aggressively; duplicates merge.
 - **Optional distillation** on `end_progress` turns the ledger into one
   long-term fragment.
+
+### Transcript history — `log_transcript` / `get_transcript`
+
+- **Raw prompts** captured by lifecycle hooks before the prompt is truncated
+  into a one-line working-memory ask.
+- **Visible assistant responses** can be stored when the client or AI calls
+  `log_transcript(role="assistant", ...)`.
+- **Reasoning summaries only** — hidden chain-of-thought is not stored; use
+  `role="reasoning_summary"` for a concise visible summary of decisions.
+- **Not injected by default** — transcript history is audit/provenance data,
+  while fragments stay synthesized long-term memory.
 
 ---
 
@@ -85,7 +97,7 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
 1. Runs `uv sync` and installs the `hippo` CLI into a repo-local `.venv/`.
 2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
 3. Installs periodic jobs **on macOS only** (launchd agents: hourly decay, 10-minute inject, daily archive). On Linux / WSL it prints the `crontab -e` lines to paste. On Windows-native it points you at Task Scheduler.
-4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot). For Cursor this is `~/.cursor/mcp.json`. For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all 13 tools through `pi.registerTool()`.
+4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot). For Cursor this is `~/.cursor/mcp.json`. For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all 15 tools through `pi.registerTool()`.
 5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
@@ -222,11 +234,19 @@ hippo progress log decision "Use a single-writer consumer"
 hippo progress show --client devin
 hippo progress end --distill --summary "Shipped it"
 
+# Transcript history
+hippo transcript log user --stdin < prompt.txt
+hippo transcript log assistant "Visible answer text"
+hippo transcript show --client devin
+
 # Admin
 hippo stats
+hippo health --duplicates
 hippo list --tag kafka
 hippo decay --dry-run
 hippo archive --dry-run
+hippo cleanup-sessions --dry-run
+hippo reconcile-mirror --dry-run
 hippo inject --commit
 ```
 
@@ -245,12 +265,13 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Hippocampus MCP Server (Python, 13 tools)                    │
+│ Hippocampus MCP Server (Python, 15 tools)                    │
 │   long-term: recall · remember · forget · pin · unpin ·      │
 │              get_fragment · list_fragments · top_fragments · │
 │              get_stats                                       │
 │   working:   log_progress · get_progress · end_progress ·    │
 │              undo_last_entry                                 │
+│   transcript: log_transcript · get_transcript                 │
 └───────────┬──────────────────────────────┬───────────────────┘
             │                              │
             ▼                              ▼
@@ -296,7 +317,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 │                                                              │
 │ Pi additionally gets a TypeScript extension at:              │
 │   ~/.pi/agent/extensions/hippocampus/index.ts                │
-│ which spawns the MCP server and re-exposes its 13 tools      │
+│ which spawns the MCP server and re-exposes its 15 tools      │
 │ through Pi's native pi.registerTool() API + lifecycle hooks. │
 └──────────────────────────────────────────────────────────────┘
 ```

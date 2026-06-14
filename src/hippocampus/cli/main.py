@@ -189,38 +189,65 @@ def session() -> None:
 
 @session.command("start")
 @click.option("--client", "-c", required=True, help="Client name (devin, claude-code, ...)")
-def session_start(client: str) -> None:
+@click.option("--session-key", default=None, help="Override derived context key")
+@click.option("--new", "force_new", is_flag=True, help="Force a fresh session instead of reusing the active context session")
+def session_start(client: str, session_key: Optional[str], force_new: bool) -> None:
     _bootstrap()
     from hippocampus.storage import sessions
 
-    sid = sessions.open_session(client)
+    sid = (
+        sessions.open_session(client, session_key=session_key)
+        if force_new
+        else sessions.ensure_session(client, session_key=session_key)
+    )
     click.echo(sid)
 
 
 @session.command("end")
 @click.option("--client", "-c", required=True)
-def session_end(client: str) -> None:
+@click.option("--session-key", default=None, help="Override derived context key")
+def session_end(client: str, session_key: Optional[str]) -> None:
     _bootstrap()
     from hippocampus.storage import sessions
 
-    sid = sessions.current_session_id(client, open_if_missing=False)
+    sid = sessions.current_session_id(client, session_key=session_key, open_if_missing=False)
     sessions.close_session(sid)
     click.echo(f"closed {sid}")
 
 
 @session.command("status")
 @click.option("--client", "-c", required=False)
-def session_status(client: Optional[str]) -> None:
+@click.option("--session-key", default=None, help="Override derived context key when --client is set")
+def session_status(client: Optional[str], session_key: Optional[str]) -> None:
     _bootstrap()
     from hippocampus.clients.registry import CLIENTS
     from hippocampus.storage import sessions
 
     names = [client] if client else [c.name for c in CLIENTS]
     for n in names:
-        ptr = config.SESSION_POINTER_DIR / f"{n}.id"
-        if ptr.exists():
-            click.echo(f"{n}: {ptr.read_text().strip()}")
-        else:
+        if n is None:
+            continue
+        if client:
+            key = sessions.derive_session_key(session_key)
+            try:
+                sid = sessions.current_session_id(n, session_key=key, open_if_missing=False)
+                click.echo(f"{n}[{key}]: {sid}")
+            except RuntimeError:
+                click.echo(f"{n}[{key}]: <no session>")
+            continue
+
+        client_dir = config.SESSION_POINTER_DIR / n
+        legacy = config.SESSION_POINTER_DIR / f"{n}.id"
+        printed = False
+        if client_dir.exists():
+            for ptr in sorted(client_dir.glob("*.id")):
+                key = ptr.name[:-3] if ptr.name.endswith(".id") else ptr.stem
+                click.echo(f"{n}[{key}]: {ptr.read_text().strip()}")
+                printed = True
+        if legacy.exists():
+            click.echo(f"{n}[legacy]: {legacy.read_text().strip()}")
+            printed = True
+        if not printed:
             click.echo(f"{n}: <no session>")
 
 
@@ -301,6 +328,36 @@ def stats() -> None:
     _bootstrap()
     from hippocampus.mcp import tools
     click.echo(json.dumps(tools.get_stats(), indent=2, ensure_ascii=False))
+
+
+@cli.command("health")
+@click.option("--duplicates", is_flag=True, help="Include embedding duplicate candidates")
+def health_cmd(duplicates: bool) -> None:
+    """Operational health snapshot: sessions, mirror, tags, embeddings, duplicates."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    click.echo(json.dumps(maintenance.health_snapshot(include_duplicates=duplicates), indent=2, ensure_ascii=False))
+
+
+@cli.command("cleanup-sessions")
+@click.option("--dry-run/--commit", default=True, help="Preview without mutating")
+def cleanup_sessions_cmd(dry_run: bool) -> None:
+    """Clean no-activity sessions and close duplicate active contexts."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    click.echo(json.dumps(maintenance.cleanup_sessions(dry_run=dry_run), indent=2, ensure_ascii=False))
+
+
+@cli.command("reconcile-mirror")
+@click.option("--dry-run/--commit", default=True, help="Preview without mutating")
+def reconcile_mirror_cmd(dry_run: bool) -> None:
+    """Reconcile the markdown mirror with SQLite canonical fragments."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    click.echo(json.dumps(maintenance.reconcile_mirror(dry_run=dry_run), indent=2, ensure_ascii=False))
 
 
 @cli.command("list")
@@ -525,6 +582,53 @@ def progress_undo(client: Optional[str]) -> None:
     _bootstrap()
     from hippocampus.mcp import tools
     out = tools.undo_last_entry(client=client)
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# transcript
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def transcript() -> None:
+    """Raw/visible session transcript history."""
+
+
+@transcript.command("log")
+@click.argument("role", type=click.Choice(["user", "assistant", "assistant_summary", "reasoning_summary", "system", "tool"]))
+@click.argument("content", required=False)
+@click.option("--stdin", "read_stdin", is_flag=True, help="Read content from stdin")
+@click.option("--source-event", default=None)
+@click.option("--client", "-c", default=None)
+def transcript_log(role: str, content: Optional[str], read_stdin: bool, source_event: Optional[str], client: Optional[str]) -> None:
+    """Append one transcript row for the current session context."""
+    if client:
+        os.environ["HIPPOCAMPUS_CLIENT"] = client
+    _bootstrap()
+    if read_stdin or content is None:
+        content = sys.stdin.read()
+    from hippocampus.mcp import tools
+
+    out = tools.log_transcript(
+        role=role,
+        content=content or "",
+        source_event=source_event,
+        client=client,
+    )
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@transcript.command("show")
+@click.option("--client", "-c", default=None)
+@click.option("--limit", default=200, show_default=True)
+def transcript_show(client: Optional[str], limit: int) -> None:
+    if client:
+        os.environ["HIPPOCAMPUS_CLIENT"] = client
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    out = tools.get_transcript(client=client, limit=limit)
     click.echo(json.dumps(out, indent=2, ensure_ascii=False))
 
 

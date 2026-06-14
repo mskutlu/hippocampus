@@ -24,6 +24,16 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _store_context_tag(context_tag: str | None) -> bool:
+    if not context_tag or not context_tag.strip():
+        return False
+    tag = context_tag.strip()
+    return not (
+        tag.startswith("log_progress")
+        or tag.startswith("cluster:")
+    )
+
+
 def boost(
     fragment_id: str,
     *,
@@ -39,7 +49,7 @@ def boost(
     now = _utc_now()
 
     add_tags: list[str] = []
-    if context_tag and context_tag.strip():
+    if _store_context_tag(context_tag):
         add_tags.append(context_tag.strip())
 
     updated = frag_store.update_fields(

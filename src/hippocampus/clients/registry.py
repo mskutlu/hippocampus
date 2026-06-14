@@ -141,7 +141,7 @@ CLIENTS: list[ClientSpec] = [
     # support — capabilities are added via TypeScript extensions auto-discovered
     # under ~/.pi/agent/extensions/. We "register" by installing the bundled
     # `hippocampus` extension dir (spawns the Hippocampus MCP server and re-exposes
-    # all 13 tools through pi.registerTool() + auto-trigger session_start /
+    # all 15 tools through pi.registerTool() + auto-trigger session_start /
     # user_message hooks).
     ClientSpec(
         name="pi",

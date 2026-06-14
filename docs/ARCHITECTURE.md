@@ -14,6 +14,7 @@
 │ hippocampus.mcp.server (Python stdio MCP server)              │
 │   recall · remember · forget · pin · unpin                    │
 │   get_fragment · list_fragments · top_fragments · get_stats   │
+│   log_progress · get_progress · log_transcript · get_transcript│
 └───────────┬──────────────────────────────┬────────────────────┘
             │                              │
             ▼                              ▼
@@ -84,9 +85,21 @@ carries a `weight` (starts at 1.0, grows by 1.0 per co-access) and a
 
 ### `sessions` + `session_accesses`
 
-Each AI client opens a session on first use. Every fragment access is logged
-against the current session id. The decay loop consults "was this fragment
-touched in the current or previous session?" to build the shield.
+Each AI client opens a session on first use for the current `session_key`.
+The key is derived from an explicit override when present, otherwise from
+terminal TTY / terminal-session hints plus cwd. This allows multiple terminals
+or worktrees using the same client to keep separate ledgers. Every fragment
+access is logged against the current session id. The decay loop consults
+"was this fragment touched in the current or previous session?" to build the
+shield.
+
+### `session_transcript`
+
+Append-only raw/visible conversation history for a session. This table stores
+full user prompts captured by hooks, visible assistant responses when clients
+or agents provide them, and explicit reasoning summaries. It is deliberately
+separate from `fragments`: transcript rows are provenance, while fragments are
+synthesized long-term memory. Hidden chain-of-thought should not be stored.
 
 ### `feedback_log`
 
@@ -131,7 +144,7 @@ feedback, or an explicit decay cycle.
 
 ## MCP surface
 
-Twelve tools, all plain Python functions in `hippocampus.mcp.tools` so the
+Fifteen tools, all plain Python functions in `hippocampus.mcp.tools` so the
 CLI, tests, and direct callers use the same code path as MCP clients.
 
 | Layer | Tool | Purpose |
@@ -147,6 +160,9 @@ CLI, tests, and direct callers use the same code path as MCP clients.
 | working | `log_progress` | append a ledger entry + refresh the working block |
 | working | `get_progress` | read the current ledger |
 | working | `end_progress` | close session, optionally distill to long-term fragment |
+| transcript | `log_transcript` | store raw prompt / visible response / reasoning summary |
+| transcript | `get_transcript` | read current session transcript rows |
+| working | `undo_last_entry` | remove the latest ledger entry within the undo window |
 
 ## Concurrency
 

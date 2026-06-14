@@ -124,10 +124,11 @@ _DEFAULTS: dict[str, Any] = {
     # V9 — passive autonomy + biology recalibration
     "decay_skip_recent_days": 30,          # don't decay fragments accessed in last N days
     "auto_distill_min_entries": 3,         # idle session must have >= N entries to distill
-    "auto_pin_access_threshold": 10,       # auto-pin a fragment after N accesses
-    "log_progress_recall_boost_k": 3,      # how many semantic hits to boost per log_progress
-    "log_progress_recall_min_score": 0.50, # min semantic score to qualify
-    "cluster_boost_factor": 0.33,          # neighbor boost = BOOST_DELTA * factor
+    "auto_pin_access_threshold": 50,       # auto-pin a fragment after N accesses
+    "log_progress_recall_boost_k": 1,      # how many semantic hits to boost per log_progress
+    "log_progress_recall_min_score": 0.65, # min semantic score to qualify
+    "cluster_boost_factor": 0.10,          # neighbor boost = BOOST_DELTA * factor
+    "pin_rank_bonus": 0.03,                # ranking bonus; pin protects from decay but does not dominate
     "tag_canonicalize_threshold": 0.85,    # difflib ratio above this -> use existing tag
     "dedup_cosine_threshold": 0.95,        # hippo dedup: pairs above this are duplicates
     "autoremember_enabled": True,          # UserPromptSubmit pattern-detect

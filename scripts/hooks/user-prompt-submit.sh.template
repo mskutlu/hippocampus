@@ -21,6 +21,26 @@ set -uo pipefail
 CLIENT="${1:-devin}"
 HIPPO_BIN="__HIPPO_BIN__"
 
+detect_hippo_context() {
+    if [[ -z "${HIPPOCAMPUS_TTY:-}" ]]; then
+        local tty_name
+        tty_name="$(tty 2>/dev/null || true)"
+        if [[ "$tty_name" == "not a tty" ]]; then
+            tty_name=""
+        fi
+        if [[ -z "$tty_name" ]]; then
+            tty_name="$(ps -o tty= -p "$PPID" 2>/dev/null | tr -d ' ' || true)"
+            if [[ "$tty_name" == "?" || "$tty_name" == "??" ]]; then
+                tty_name=""
+            fi
+        fi
+        export HIPPOCAMPUS_TTY="$tty_name"
+    fi
+    export HIPPOCAMPUS_CWD="${HIPPOCAMPUS_CWD:-${PWD:-}}"
+}
+
+detect_hippo_context
+
 INPUT_JSON="$(cat || true)"
 
 PROMPT=""
@@ -52,10 +72,18 @@ sys.stdout.write(prompt)
 ' <<< "$INPUT_JSON" > "$FULL_PROMPT_FILE" 2>/dev/null || true
 fi
 
+# Store the full raw prompt in transcript history before the capped ledger ask.
+PROMPT_LOGGED=""
+if [[ -n "$FULL_PROMPT_FILE" && -s "$FULL_PROMPT_FILE" && -x "$HIPPO_BIN" ]]; then
+    if HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" transcript log user --client "$CLIENT" --source-event UserPromptSubmit --stdin < "$FULL_PROMPT_FILE" >/dev/null 2>&1; then
+        PROMPT_LOGGED="1"
+    fi
+fi
+
 # Side effect: log the ask BEFORE we render the context so the new ask is
 # visible in the live block we emit.
 if [[ -n "$PROMPT" && -x "$HIPPO_BIN" ]]; then
-    HIPPOCAMPUS_CLIENT="$CLIENT" "$HIPPO_BIN" progress log ask "$PROMPT" --client "$CLIENT" >/dev/null 2>&1 || true
+    HIPPOCAMPUS_CLIENT="$CLIENT" HIPPOCAMPUS_TRANSCRIPT_PROMPT_LOGGED="$PROMPT_LOGGED" "$HIPPO_BIN" progress log ask "$PROMPT" --client "$CLIENT" >/dev/null 2>&1 || true
 fi
 
 # V9 G5 — auto-remember on "remember / always / never / add to rules / …" triggers.

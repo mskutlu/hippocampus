@@ -230,13 +230,23 @@ class McpClient {
 // Hippocampus CLI helpers — used for lifecycle wiring
 // ---------------------------------------------------------------------------
 
-function hippoExec(args: string[], stdinPayload?: string): { ok: boolean; stdout: string; stderr: string } {
+function hippoExec(
+	args: string[],
+	stdinPayload?: string,
+	extraEnv: Record<string, string> = {},
+): { ok: boolean; stdout: string; stderr: string } {
 	try {
 		const result = spawnSync(HIPPO_BIN, args, {
 			input: stdinPayload,
 			encoding: "utf8",
 			timeout: 8_000,
-			env: { ...process.env, HIPPOCAMPUS_CLIENT },
+			env: {
+				...process.env,
+				HIPPOCAMPUS_CLIENT,
+				HIPPOCAMPUS_CWD: process.env.HIPPOCAMPUS_CWD || process.cwd(),
+				HIPPOCAMPUS_TTY: process.env.HIPPOCAMPUS_TTY || process.env.TTY || process.env.SSH_TTY || "",
+				...extraEnv,
+			},
 		});
 		return {
 			ok: result.status === 0,
@@ -316,6 +326,24 @@ const TOOL_SCHEMAS = {
 		full: Type.Optional(Type.Boolean()),
 		client: Type.Optional(Type.String()),
 	}),
+	log_transcript: Type.Object({
+		role: Type.Union([
+			Type.Literal("user"),
+			Type.Literal("assistant"),
+			Type.Literal("assistant_summary"),
+			Type.Literal("reasoning_summary"),
+			Type.Literal("system"),
+			Type.Literal("tool"),
+		]),
+		content: Type.String(),
+		source_event: Type.Optional(Type.String()),
+		metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+		client: Type.Optional(Type.String()),
+	}),
+	get_transcript: Type.Object({
+		client: Type.Optional(Type.String()),
+		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
+	}),
 	end_progress: Type.Object({
 		distill_to_fragment: Type.Optional(Type.Boolean()),
 		summary: Type.Optional(Type.String()),
@@ -346,6 +374,10 @@ const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
 		"WORKING MEMORY — append one entry to the current session's ledger. Call this reflexively: every ask -> log_progress(kind='ask', ...); every completed action -> kind='done'; decisions -> 'decision'; blockers -> 'blocker'; planned next steps -> 'next'; goal changes -> 'goal'; other context -> 'note'. The entry survives compaction because the WORKING block is re-injected into the client's always-on rules file on every turn. Any frag_... ids referenced in content are boosted as if recalled. Dedup window: identical entries within 60s are merged.",
 	get_progress:
 		"Return the current session's ledger (or full history). Call this when you need more detail than the injected WORKING block shows.",
+	log_transcript:
+		"Store raw/visible transcript content for the current session. Use user for raw prompts, assistant for visible responses, and reasoning_summary for concise visible reasoning summaries. Do not store hidden chain-of-thought.",
+	get_transcript:
+		"Return raw/visible transcript rows for the current session.",
 	end_progress:
 		"Close the current session and optionally distill the whole ledger into a single long-term fragment. Call this when the task is complete. The next log_progress call will start a fresh session.",
 	undo_last_entry:
@@ -364,6 +396,8 @@ const TOOL_LABELS: Record<ToolName, string> = {
 	get_stats: "Hippocampus stats",
 	log_progress: "Log progress",
 	get_progress: "Get progress",
+	log_transcript: "Log transcript",
+	get_transcript: "Get transcript",
 	end_progress: "End progress",
 	undo_last_entry: "Undo last entry",
 };
@@ -416,8 +450,14 @@ export default function hippocampus(pi: ExtensionAPI) {
 		const promptRaw = (event as { prompt?: string }).prompt ?? "";
 		const prompt = promptRaw.trim();
 		if (prompt) {
+			const promptLogged = hippoExec(
+				["transcript", "log", "user", "--client", HIPPOCAMPUS_CLIENT, "--source-event", "BeforeAgentStart", "--stdin"],
+				prompt,
+			).ok;
 			hippoExec(
 				["progress", "log", "ask", prompt.slice(0, ASK_TRUNCATE_CHARS), "--client", HIPPOCAMPUS_CLIENT],
+				undefined,
+				promptLogged ? { HIPPOCAMPUS_TRANSCRIPT_PROMPT_LOGGED: "1" } : {},
 			);
 			hippoExec(
 				["autoremember", "--client", HIPPOCAMPUS_CLIENT, "--stdin", "--quiet"],

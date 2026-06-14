@@ -122,6 +122,10 @@
       <div class="grid" id="stats-grid"></div>
     </div>
     <div class="panel">
+      <h2>Health</h2>
+      <div class="grid" id="health-grid"></div>
+    </div>
+    <div class="panel">
       <h2>Top-N (auto-injected)</h2>
       <table id="top-table"><thead><tr><th>conf</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
     </div>
@@ -252,7 +256,7 @@ function renderFragmentCell(f) {
 }
 
 async function loadDashboard() {
-  const stats = await api('/api/stats');
+  const [stats, health] = await Promise.all([api('/api/stats'), api('/api/health')]);
   const grid = document.getElementById('stats-grid');
   grid.innerHTML = [
     `<div class="panel" style="margin:0"><div class="stat">${stats.total_fragments}<small>fragments</small></div></div>`,
@@ -260,6 +264,15 @@ async function loadDashboard() {
     `<div class="panel" style="margin:0"><div class="stat">${stats.average_confidence?.toFixed?.(3) ?? '—'}<small>avg confidence</small></div></div>`,
     `<div class="panel" style="margin:0"><div class="stat">+${stats.boost_delta}<small>boost delta</small></div></div>`,
     `<div class="panel" style="margin:0"><div class="stat">-${stats.decay_delta}<small>decay / cycle</small></div></div>`,
+  ].join('');
+
+  const healthGrid = document.getElementById('health-grid');
+  healthGrid.innerHTML = [
+    `<div class="panel" style="margin:0"><div class="stat">${health.sessions.open}<small>open sessions</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">${health.sessions.no_activity}<small>no-activity sessions</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">${health.mirror.orphan_files}/${health.mirror.missing_files}<small>mirror orphan/missing</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">${health.fragments.missing_embeddings}<small>missing embeddings</small></div></div>`,
+    `<div class="panel" style="margin:0"><div class="stat">${health.tags.singletons}<small>singleton tags</small></div></div>`,
   ].join('');
 
   const top = await api('/api/top');

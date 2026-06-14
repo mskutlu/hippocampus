@@ -213,6 +213,47 @@ TOOL_SPECS: list[Tool] = [
         },
     ),
     Tool(
+        name="log_transcript",
+        description=(
+            "Store raw/visible transcript content for the current session. "
+            "Use role='user' for raw prompts, role='assistant' for visible assistant "
+            "responses, and role='reasoning_summary' for a concise visible reasoning "
+            "summary. Do not store hidden chain-of-thought."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "assistant_summary",
+                        "reasoning_summary",
+                        "system",
+                        "tool",
+                    ],
+                },
+                "content": {"type": "string"},
+                "source_event": {"type": "string"},
+                "metadata": {"type": "object"},
+                "client": {"type": "string"},
+            },
+            "required": ["role", "content"],
+        },
+    ),
+    Tool(
+        name="get_transcript",
+        description="Return raw/visible transcript rows for the current session.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "client": {"type": "string"},
+                "limit": {"type": "integer", "default": 200, "minimum": 1, "maximum": 1000},
+            },
+        },
+    ),
+    Tool(
         name="end_progress",
         description=(
             "Close the current session and optionally distill the whole ledger into a "
@@ -259,6 +300,8 @@ TOOL_DISPATCH = {
     "get_stats": T.get_stats,
     "log_progress": T.log_progress,
     "get_progress": T.get_progress,
+    "log_transcript": T.log_transcript,
+    "get_transcript": T.get_transcript,
     "end_progress": T.end_progress,
     "undo_last_entry": T.undo_last_entry,
 }

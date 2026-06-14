@@ -37,7 +37,7 @@ def test_recency_decays_over_halflife(hippo_env):
     assert r == pytest.approx(0.3679, rel=0.01)
 
 
-def test_top_n_orders_pinned_first_then_by_score(hippo_env):
+def test_top_n_uses_score_before_pin_bonus(hippo_env):
     from hippocampus.storage import fragments as F
     from hippocampus.dynamics import boost, ranking
 
@@ -45,13 +45,12 @@ def test_top_n_orders_pinned_first_then_by_score(hippo_env):
     b = F.create("b", summary="B")
     c = F.create("c", summary="C")
 
-    # Boost a so its confidence is higher, pin b so it leads, leave c untouched.
-    boost.boost(a.id, client="pytest")
-    boost.boost(a.id, client="pytest")  # confidence now 0.53
+    # Boost a enough to beat the small pin bonus on b. Leave c untouched.
+    for _ in range(4):
+        boost.boost(a.id, client="pytest")
     F.update_fields(b.id, pinned=True)
 
     top = ranking.top_n(limit=10)
-    assert top[0].id == b.id  # pinned first
-    # After the pinned one, the two unpinned should be ordered by score
-    rest = [t.id for t in top[1:]]
-    assert rest.index(a.id) < rest.index(c.id)
+    ids = [t.id for t in top]
+    assert ids.index(a.id) < ids.index(b.id)
+    assert ids.index(b.id) < ids.index(c.id)

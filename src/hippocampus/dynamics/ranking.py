@@ -42,6 +42,13 @@ def compute_score(confidence: float, last_accessed_at: str | None, now: datetime
     return confidence * config.RANK_W_CONFIDENCE + r * config.RANK_W_RECENCY
 
 
+def ranked_score(frag: frag_store.Fragment, now: datetime | None = None) -> float:
+    score = compute_score(frag.confidence, frag.last_accessed_at, now)
+    if frag.pinned:
+        score += float(config.get_setting("pin_rank_bonus") or 0.0)
+    return min(1.0, score)
+
+
 def top_n(limit: int | None = None, min_confidence: float = 0.0) -> list[frag_store.Fragment]:
     """Return highest-scoring fragments for injection. Pinned always included first."""
     n = limit if limit is not None else config.TOP_N_DEFAULT
@@ -50,8 +57,9 @@ def top_n(limit: int | None = None, min_confidence: float = 0.0) -> list[frag_st
     # Fetch a generous candidate pool; then rank in Python so we can apply the
     # full score (SQLite's math functions are patchy across builds).
     pool = frag_store.list_all(min_confidence=min_confidence, limit=max(200, n * 4))
-    scored = [(compute_score(f.confidence, f.last_accessed_at, now), f) for f in pool]
+    scored = [(ranked_score(f, now), f) for f in pool]
 
-    # Pinned first, then by score desc, then by accessed desc as a stable kicker.
-    scored.sort(key=lambda t: (not t[1].pinned, -t[0], -t[1].accessed))
+    # Score first. Pinned protects from decay and adds a small configurable
+    # bonus, but no longer dominates the whole injection list.
+    scored.sort(key=lambda t: (-t[0], -t[1].accessed, not t[1].pinned))
     return [f for _, f in scored[:n]]
