@@ -49,6 +49,13 @@ def _client_from_env() -> str:
     return os.environ.get("HIPPOCAMPUS_CLIENT", "unknown").strip().lower() or "unknown"
 
 
+def _client_name(client: str | None = None) -> str:
+    name = (client or _client_from_env()).strip().lower()
+    if not name or name == "unknown":
+        return "cli"
+    return name
+
+
 def _as_dict(frag) -> dict[str, Any]:
     return frag.to_dict()
 
@@ -158,7 +165,7 @@ def recall(
         }
 
     # Boost all hits (biology) + associations
-    client = _client_from_env()
+    client = _client_name()
     session_id = sessions.current_session_id(client)
     hit_ids = [f.id for f in hit_frags]
     boosted = boost_dyn.boost_many(
@@ -264,7 +271,7 @@ def unpin(fragment_id: str) -> dict[str, Any]:
 def get_fragment(fragment_id: str, boost_on_read: bool = True) -> dict[str, Any]:
     _ensure_bootstrapped()
     if boost_on_read:
-        client = _client_from_env()
+        client = _client_name()
         session_id = sessions.current_session_id(client)
         updated = boost_dyn.boost(fragment_id, session_id=session_id, client=client)
         if updated is None:
@@ -410,9 +417,7 @@ def log_progress(
     """
     _ensure_bootstrapped()
 
-    client_name = (client or _client_from_env()).strip().lower()
-    if not client_name or client_name == "unknown":
-        client_name = "cli"
+    client_name = _client_name(client)
     session_id, session_key = _current_context(client_name)
 
     entry = ledger_store.log_entry(
@@ -515,7 +520,7 @@ def auto_remember(prompt: str, client: str | None = None) -> dict[str, Any]:
     Designed to be called by the UserPromptSubmit hook on every turn.
     """
     _ensure_bootstrapped()
-    client_name = (client or _client_from_env()).strip().lower() or "unknown"
+    client_name = _client_name(client)
 
     from hippocampus.dynamics import autoremember as auto_dyn
 
@@ -536,7 +541,7 @@ def undo_last_entry(client: str | None = None) -> dict[str, Any]:
     older corrections.
     """
     _ensure_bootstrapped()
-    client_name = (client or _client_from_env()).strip().lower() or "cli"
+    client_name = _client_name(client)
     try:
         sid = sessions.current_session_id(client_name, open_if_missing=False)
     except RuntimeError:
@@ -567,7 +572,7 @@ def undo_last_entry(client: str | None = None) -> dict[str, Any]:
 
 def get_progress(client: str | None = None, full: bool = False) -> dict[str, Any]:
     _ensure_bootstrapped()
-    client_name = (client or _client_from_env()).strip().lower() or "unknown"
+    client_name = _client_name(client)
     try:
         sid = sessions.current_session_id(client_name, open_if_missing=False)
     except RuntimeError:
@@ -595,9 +600,7 @@ def log_transcript(
     reasoning summary instead.
     """
     _ensure_bootstrapped()
-    client_name = (client or _client_from_env()).strip().lower()
-    if not client_name or client_name == "unknown":
-        client_name = "cli"
+    client_name = _client_name(client)
     session_id, session_key = _current_context(client_name)
     entry = transcript_store.log_entry(
         session_id=session_id,
@@ -620,9 +623,7 @@ def log_transcript(
 
 def get_transcript(client: str | None = None, limit: int = 200) -> dict[str, Any]:
     _ensure_bootstrapped()
-    client_name = (client or _client_from_env()).strip().lower()
-    if not client_name or client_name == "unknown":
-        client_name = "cli"
+    client_name = _client_name(client)
     session_key = sessions.derive_session_key()
     try:
         sid = sessions.current_session_id(client_name, session_key=session_key, open_if_missing=False)
@@ -646,7 +647,7 @@ def end_progress(
 ) -> dict[str, Any]:
     """Close the current session for `client` and optionally distill a fragment."""
     _ensure_bootstrapped()
-    client_name = (client or _client_from_env()).strip().lower() or "unknown"
+    client_name = _client_name(client)
 
     try:
         sid = sessions.current_session_id(client_name, open_if_missing=False)

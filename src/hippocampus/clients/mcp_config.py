@@ -169,10 +169,24 @@ def _server_bucket(data: dict, fmt: str) -> dict[str, Any] | None:
     if fmt == "vscode-mcp-json":
         data.setdefault("servers", {})
         return data["servers"]
-    if fmt in ("devin-json", "claude-json", "windsurf-mcp", "opencode-json", "cursor-mcp-json"):
+    if fmt == "opencode-json":
+        data.setdefault("mcp", {})
+        return data["mcp"]
+    if fmt in ("devin-json", "claude-json", "windsurf-mcp", "cursor-mcp-json"):
         data.setdefault("mcpServers", {})
         return data["mcpServers"]
     return None
+
+
+def _remove_legacy_opencode_mcpservers(data: dict[str, Any]) -> bool:
+    """Remove the invalid OpenCode mcpServers.hippocampus entry from older releases."""
+    legacy = data.get("mcpServers")
+    if not isinstance(legacy, dict) or MCP_ENTRY_NAME not in legacy:
+        return False
+    legacy.pop(MCP_ENTRY_NAME, None)
+    if not legacy:
+        data.pop("mcpServers", None)
+    return True
 
 
 def _pi_extension_template_dir() -> Path:
@@ -299,6 +313,10 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
     if bucket is None:
         return False, f"{spec.name}: unknown mcp_config_format {fmt!r}"
 
+    legacy_changed = False
+    if fmt == "opencode-json":
+        legacy_changed = _remove_legacy_opencode_mcpservers(data)
+
     # env is passed through by every client's MCP transport; the server reads
     # HIPPOCAMPUS_CLIENT to correctly scope session tracking.
     new_entry = {
@@ -308,9 +326,17 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
     }
     if fmt == "vscode-mcp-json":
         new_entry = {"type": "stdio", **new_entry}
+    elif fmt == "opencode-json":
+        new_entry = {
+            "type": "local",
+            "enabled": True,
+            "timeout": 30000,
+            "command": [cmd["command"], *cmd["args"]],
+            "environment": {"HIPPOCAMPUS_CLIENT": spec.name},
+        }
 
     existing = bucket.get(MCP_ENTRY_NAME)
-    if existing == new_entry:
+    if existing == new_entry and not legacy_changed:
         return False, f"{spec.name}: already registered at {path}"
     bucket[MCP_ENTRY_NAME] = new_entry
     _write_json(path, data)
@@ -329,7 +355,10 @@ def unregister(spec: ClientSpec) -> tuple[bool, str]:
     servers = _server_bucket(data, spec.mcp_config_format)
     if servers is None:
         return False, f"{spec.name}: unknown mcp_config_format {spec.mcp_config_format!r}"
-    if MCP_ENTRY_NAME not in servers:
+    legacy_changed = False
+    if spec.mcp_config_format == "opencode-json":
+        legacy_changed = _remove_legacy_opencode_mcpservers(data)
+    if MCP_ENTRY_NAME not in servers and not legacy_changed:
         return False, f"{spec.name}: entry not present"
     servers.pop(MCP_ENTRY_NAME, None)
     _write_json(path, data)

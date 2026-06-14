@@ -226,6 +226,32 @@ Token cost is bounded: each hook payload is capped at `hook_inject_budget_chars`
 
 After installing, **restart Cursor** so it reloads `mcp.json`, the rule file, and `hooks.json`. Recent Cursor versions load global `~/.cursor/rules/*.mdc` rules across projects; if your version doesn't pick it up, copy or symlink `~/.cursor/rules/hippocampus.mdc` into a project's `.cursor/rules/`, or rely on the `sessionStart` hook + MCP `recall` (both work regardless). The `hooks.json` integration is the officially-supported global path and always applies.
 
+### OpenCode
+
+`hippo register` adds Hippocampus to `~/.config/opencode/opencode.json` under
+top-level `mcp.hippocampus`. OpenCode does **not** support top-level
+`mcpServers`; older Hippocampus versions could write that Cursor-style key, and
+current `hippo register` removes the legacy `mcpServers.hippocampus` entry if it
+finds one.
+
+The OpenCode entry uses its native local-server shape:
+
+```json
+{
+  "mcp": {
+    "hippocampus": {
+      "type": "local",
+      "enabled": true,
+      "timeout": 30000,
+      "command": ["hippocampus-mcp"],
+      "environment": {
+        "HIPPOCAMPUS_CLIENT": "opencode"
+      }
+    }
+  }
+}
+```
+
 ### Codex
 
 `hippo register` adds Hippocampus to `~/.codex/config.toml` as
