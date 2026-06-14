@@ -101,6 +101,46 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
 5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
+### Updating an existing install
+
+You normally do **not** need to delete and reinstall Hippocampus after pulling
+changes. Refresh the editable install, apply migrations, refresh client config,
+refresh hooks, rebuild injection files, and then run the health check:
+
+```bash
+git pull
+uv sync
+uv pip install -e .
+uv run hippo init
+uv run hippo register
+uv run hippo install-hooks
+uv run hippo inject --commit
+uv run hippo reindex
+uv run hippo doctor
+```
+
+If you installed extras, refresh the same extras you use, for example
+`uv pip install -e '.[semantic]'` or `uv pip install -e '.[semantic,web]'`.
+
+What those commands update:
+
+- `hippo init` applies new SQLite migrations, including session keys and
+  transcript history.
+- `hippo register` refreshes MCP config for Devin, Claude Code, Cursor, Codex,
+  OpenCode, Windsurf, Antigravity, VS Code Copilot, and refreshes Pi's bundled
+  extension.
+- `hippo install-hooks` refreshes lifecycle hooks for Devin, Claude Code,
+  Cursor, and Antigravity.
+- `hippo inject --commit` refreshes the always-on rules files, including
+  `~/.codex/AGENTS.md`.
+- `hippo reindex` fills any missing embeddings after new auto-distilled
+  fragments or migrations.
+
+Restart any AI client after `register`, `install-hooks`, or `inject` so it
+reloads MCP config and global instructions. Codex users do not need shell hooks,
+but should restart Codex after updates so `~/.codex/config.toml` and
+`~/.codex/AGENTS.md` are re-read.
+
 ### Linux / WSL — setting up cron
 
 The installer will print these lines; paste them into `crontab -e` (or use `crontab -l | { cat; echo "..."; } | crontab -`):
@@ -157,6 +197,12 @@ hippo install-hooks     # registers Devin + Claude Code + Cursor + Antigravity s
 hippo register          # installs the Pi extension (covers Pi's lifecycle)
 ```
 
+Codex is covered by MCP registration plus the global `~/.codex/AGENTS.md`
+injection file. It is intentionally not listed in this hook table because Codex
+does not currently consume these shell lifecycle hooks; use `log_progress`,
+`recall`, `remember`, `log_transcript`, and the other MCP tools directly inside a
+Codex session.
+
 | Hook | Devin | Claude Code | Cursor | Antigravity | Pi | What it does (v1.5+) |
 |---|---|---|---|---|---|---|
 | `SessionStart` / `sessionStart` / `session_start` | ✓ | ✓ | ✓ | ✓ | ✓ | Opens a Hippocampus session and injects the memory protocol **+ the live working ledger + top long-term fragments** as context. The AI sees real state from turn 0 instead of whatever the rules file happened to hold. On Cursor this uses the `sessionStart` hook's `additional_context` field — the one Cursor event that supports context injection. |
@@ -182,7 +228,40 @@ After installing, **restart Cursor** so it reloads `mcp.json`, the rule file, an
 
 ### Codex
 
-`hippo register` adds Hippocampus to `~/.codex/config.toml` as `[mcp_servers.hippocampus]` and tags tool calls with `HIPPOCAMPUS_CLIENT=codex`. `hippo inject` writes the long-term and working-memory blocks into `~/.codex/AGENTS.md`, which Codex loads as global instructions. Codex does not currently use the shell lifecycle hooks installed by `hippo install-hooks`; keep the periodic `hippo inject` job enabled for on-disk context refreshes, and use the MCP tools directly for live recall/progress updates inside a Codex session.
+`hippo register` adds Hippocampus to `~/.codex/config.toml` as
+`[mcp_servers.hippocampus]` and tags tool calls with
+`HIPPOCAMPUS_CLIENT=codex`. `hippo inject` writes the long-term and
+working-memory blocks into `~/.codex/AGENTS.md`, which Codex loads as global
+instructions.
+
+Codex does not currently use the shell lifecycle hooks installed by
+`hippo install-hooks`. Keep the periodic `hippo inject` job enabled for on-disk
+context refreshes, and use the MCP tools directly for live recall/progress
+updates inside a Codex session:
+
+- `log_progress` / `get_progress` / `end_progress` for working memory.
+- `recall` / `remember` for long-term memory.
+- `log_transcript` / `get_transcript` for raw prompt and visible assistant
+  response history.
+
+Because Codex can run multiple terminals or worktrees for the same repo,
+Hippocampus scopes sessions below the client using terminal and workspace
+context. Two Codex terminals can therefore keep separate working ledgers instead
+of sharing one broad `codex` session.
+
+After installing or upgrading, restart Codex so it reloads both
+`~/.codex/config.toml` and `~/.codex/AGENTS.md`.
+
+### Session identity
+
+Hippocampus allows multiple active sessions for the same client. The stable
+session key includes client plus terminal/workspace context, with terminal TTY as
+a first-class discriminator and the current workspace path as supporting
+context. This avoids mixing unrelated work when you run several Codex, Claude
+Code, Devin, Cursor, or Pi sessions at once.
+
+Empty sessions are cleaned up by `hippo cleanup-sessions`, and the normal health
+flow reports session bloat through `hippo doctor` / `hippo health`.
 
 ### Verify
 
@@ -227,7 +306,7 @@ hippo top --limit 10
 hippo pin   frag_01H...
 hippo forget frag_01H...
 
-# Working memory (if hooks installed, asks are auto-logged — you only do dones/decisions manually)
+# Working memory (hook-supported clients auto-log asks; Codex uses MCP calls directly)
 hippo progress log goal     "Ship the feature"
 hippo progress log done     "Wrote the migration"
 hippo progress log decision "Use a single-writer consumer"
@@ -364,4 +443,4 @@ if you ever want to revert to the original state.
 ## Contributing
 
 PRs welcome. Run `uv run pytest tests -q` before pushing; the suite should
-stay green (87/87 at last count).
+stay green (131/131 at last count).
