@@ -119,3 +119,14 @@ def test_cli_context_query_passes_through(hippo_env):
     )
     assert result.exit_code == 0, result.output
     assert "kafka idempotency" in result.output
+
+
+def test_render_context_includes_wiki_status_when_enabled(hippo_env, monkeypatch):
+    from hippocampus.clients import hook_context
+
+    monkeypatch.setenv("HIPPO_WIKI_ENABLED", "true")
+    payload = hook_context.render_context(client="pytest", include_working=False, include_fragments=False)
+
+    assert "LLM Wiki" in payload
+    assert "not initialized" in payload
+    assert "wiki_init" in payload

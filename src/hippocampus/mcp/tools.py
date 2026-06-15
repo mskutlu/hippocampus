@@ -769,6 +769,137 @@ def auto_end_idle_sessions() -> dict[str, Any]:
     return {"ended": len(ended), "minutes": minutes_int, "sessions": ended}
 
 
+# ---------------------------------------------------------------------------
+# Wiki tools (V10)
+# ---------------------------------------------------------------------------
+
+
+def wiki_init(
+    project: str | None = None,
+    title: str | None = None,
+    workspace_path: str | None = None,
+    export_root: str | None = None,
+    materialize: bool = False,
+) -> dict[str, Any]:
+    """Initialize database-backed wiki state for a project."""
+    _ensure_bootstrapped()
+    from hippocampus.wiki import workspace
+
+    return workspace.init_project(
+        project=project,
+        title=title,
+        workspace_path=workspace_path,
+        export_root=export_root,
+        materialize=materialize,
+    )
+
+
+def wiki_status(project: str | None = None) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import projects, storage
+
+    key = projects.derive_project_key(project)
+    p = storage.get_project_by_key(key)
+    if p is None:
+        from hippocampus.wiki.models import blocked_not_initialized
+
+        return blocked_not_initialized(key, workspace_path=projects.current_workspace())
+    pages = storage.list_pages(p.id, limit=10_000)
+    sources = storage.list_sources(p.id, limit=10_000)
+    logs = storage.list_log(p.id, limit=1)
+    return {
+        "ok": True,
+        "blocked": False,
+        "project": p.to_dict(),
+        "pages": len(pages),
+        "sources": len(sources),
+        "has_log": bool(logs),
+    }
+
+
+def wiki_lint(project: str | None = None) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import lint
+
+    return lint.run(project=project)
+
+
+def wiki_export(project: str | None = None) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import export, projects
+
+    p, blocked = projects.require_project(project)
+    if blocked:
+        return blocked
+    assert p is not None
+    return export.materialize(p)
+
+
+def wiki_ingest(
+    raw_path: str,
+    project: str | None = None,
+    dry_run: bool = False,
+    materialize: bool = False,
+) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import ingest
+
+    return ingest.ingest(raw_path, project=project, dry_run=dry_run, materialize=materialize)
+
+
+def wiki_query(question: str, project: str | None = None, limit: int | None = None) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import query as wiki_query_mod
+
+    return wiki_query_mod.query(
+        question,
+        project=project,
+        limit=int(limit if limit is not None else config.get_setting("wiki_query_limit") or 8),
+    )
+
+
+def wiki_file_answer(
+    title: str,
+    markdown: str,
+    project: str | None = None,
+    materialize: bool = False,
+) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import query as wiki_query_mod
+
+    return wiki_query_mod.file_answer(title, markdown, project=project, materialize=materialize)
+
+
+def wiki_index(project: str | None = None) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import index as wiki_index_mod, projects
+
+    p, blocked = projects.require_project(project)
+    if blocked:
+        return blocked
+    assert p is not None
+    page = wiki_index_mod.refresh(p)
+    return {"ok": True, "project": p.to_dict(), "page": page.to_dict(), "markdown": page.markdown}
+
+
+def wiki_log(project: str | None = None, limit: int = 20) -> dict[str, Any]:
+    _ensure_bootstrapped()
+    from hippocampus.wiki import log as wiki_log_mod, projects, storage
+
+    p, blocked = projects.require_project(project)
+    if blocked:
+        return blocked
+    assert p is not None
+    page = wiki_log_mod.refresh(p)
+    return {
+        "ok": True,
+        "project": p.to_dict(),
+        "entries": [e.to_dict() for e in storage.list_log(p.id, limit=limit)],
+        "page": page.to_dict(),
+        "markdown": page.markdown,
+    }
+
+
 def _derive_summary(entries: list[ledger_store.LedgerEntry]) -> str:
     """Build a one-line summary when the caller didn't provide one."""
     goal = next((e for e in entries if e.kind == "goal"), None)

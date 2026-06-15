@@ -205,6 +205,32 @@ def _ledger_query_streams(client: str, *, max_streams: int = 4) -> list[str]:
     return streams[:max_streams]
 
 
+def _wiki_section() -> list[str]:
+    """Render compact wiki status when the wiki feature is enabled."""
+    if not bool(config.get_setting("wiki_enabled")):
+        return []
+    try:
+        from hippocampus.wiki import projects, storage
+
+        key = projects.derive_project_key()
+        p = storage.get_project_by_key(key)
+        if p is None:
+            return [
+                "## LLM Wiki",
+                f"Project `{key}` is not initialized. Ask the user before wiki work: `wiki_init(project=\"{key}\")`.",
+                "",
+            ]
+        pages = storage.list_pages(p.id, limit=10_000)
+        sources = storage.list_sources(p.id, limit=10_000)
+        return [
+            "## LLM Wiki",
+            f"Project `{p.project_key}` is initialized: {len(pages)} pages, {len(sources)} sources. Use `wiki_query`/`wiki_ingest` instead of scanning project files first.",
+            "",
+        ]
+    except Exception:
+        return []
+
+
 def render_context(
     *,
     client: str,
@@ -243,6 +269,9 @@ def render_context(
         sec = _working_section(client)
         if sec:
             sections.append(sec)
+    sec = _wiki_section()
+    if sec:
+        sections.append(sec)
     if include_fragments:
         sec = _fragment_section(query, limit=fragment_limit, extra_query_streams=extra_query_streams)
         if sec:
