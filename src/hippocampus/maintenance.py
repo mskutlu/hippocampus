@@ -71,6 +71,15 @@ def health_snapshot(*, include_duplicates: bool = False) -> dict[str, Any]:
             WHERE e.fragment_id IS NULL
             """
         ).fetchone()["n"]
+        wiki_projects = conn.execute(
+            "SELECT COUNT(*) AS n FROM wiki_projects"
+        ).fetchone()["n"]
+        wiki_pages = conn.execute(
+            "SELECT COUNT(*) AS n FROM wiki_pages"
+        ).fetchone()["n"]
+        wiki_sources = conn.execute(
+            "SELECT COUNT(*) AS n FROM wiki_sources"
+        ).fetchone()["n"]
 
     duplicate_candidates: list[dict[str, Any]] = []
     if include_duplicates:
@@ -106,6 +115,11 @@ def health_snapshot(*, include_duplicates: bool = False) -> dict[str, Any]:
             "db_fragments": len(db_ids),
             "orphan_files": len(file_ids - db_ids),
             "missing_files": len(db_ids - file_ids),
+        },
+        "wiki": {
+            "projects": int(wiki_projects or 0),
+            "pages": int(wiki_pages or 0),
+            "sources": int(wiki_sources or 0),
         },
         "duplicates": {
             "checked": include_duplicates,

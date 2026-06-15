@@ -48,6 +48,17 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Not injected by default** — transcript history is audit/provenance data,
   while fragments stay synthesized long-term memory.
 
+### LLM Wiki — `hippo wiki` / `wiki_*`
+
+- **Project-scoped wiki state in SQLite** — pages, sources, index, and log are
+  callable directly from Hippocampus instead of discovered by scanning a repo.
+- **Initialization gate** — ingest/query/lint/file-answer operations stop with
+  `wiki_not_initialized` until the project runs `hippo wiki init`.
+- **Markdown materialization** — exported `.md` files are generated views for
+  Obsidian/git; the database remains canonical.
+- **Source-backed pages** — ingested markdown/text sources create source pages,
+  index/log entries, and queryable wiki context.
+
 ---
 
 ## Install
@@ -344,6 +355,15 @@ hippo transcript log user --stdin < prompt.txt
 hippo transcript log assistant "Visible answer text"
 hippo transcript show --client devin
 
+# LLM Wiki (DB-backed, markdown export optional)
+hippo wiki status --project hippocampus
+hippo wiki init --project hippocampus --materialize
+hippo wiki ingest raw/inbox/article.md --project hippocampus --materialize
+hippo wiki query "what do we know about durable memory?" --project hippocampus
+hippo wiki file-answer "Durable Memory Summary" --project hippocampus --stdin
+hippo wiki lint --project hippocampus
+hippo wiki export --project hippocampus
+
 # Admin
 hippo stats
 hippo health --duplicates
@@ -439,6 +459,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 - `plans/v6/` — sentence-transformers provider + bench
 - `plans/v7/` — auto-trigger via lifecycle hooks
 - `plans/v8/` — compaction-safe context re-injection + sqlite-vec roadmap
+- `plans/v10/` — DB-backed LLM Wiki layer
 - `docs/ARCHITECTURE.md` — data flow, schema, injection pipeline
 - `docs/RUNBOOK.md` — operations, backup/restore, debugging
 - `CHANGELOG.md` — versioned changes

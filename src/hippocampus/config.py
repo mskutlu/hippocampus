@@ -136,6 +136,12 @@ _DEFAULTS: dict[str, Any] = {
     "inferred_negation_enabled": True,     # auto-forget on negation
     "inferred_negation_window_turns": 2,   # only consider last N turns for the cite-target
     "observe_default_confidence": 0.30,    # hippo observe starts fragments here (vs 0.50)
+    # V10 — DB-backed LLM Wiki layer
+    "wiki_enabled": False,
+    "wiki_default_export_root": str(VAULT_HOME / "Wiki"),
+    "wiki_materialize_default": False,
+    "wiki_query_limit": 8,
+    "wiki_lint_strict": False,
 }
 
 

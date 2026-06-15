@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — DB-backed LLM Wiki layer
+
+- Added V10 planning and implementation for project-scoped LLM Wiki state.
+- Added SQLite-backed wiki projects, pages, sources, links, and log entries.
+- Added `hippo wiki` commands for init, status, ingest, query, file-answer,
+  lint, export, index, and log.
+- Added MCP wiki tools with `wiki_not_initialized` blocking behavior so agents
+  initialize a project before wiki operations.
+- Added markdown materialization from DB records for Obsidian/git workflows.
+- Updated README, architecture docs, runbook, and tests.
+
 ### Added — Cursor support
 
 Hippocampus now ships as a first-class client for [Cursor](https://cursor.com).

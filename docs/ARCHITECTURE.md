@@ -106,6 +106,20 @@ synthesized long-term memory. Hidden chain-of-thought should not be stored.
 Append-only audit trail: `boost`, `decay`, `negative`, `pin`, `unpin`,
 `archive`. Useful for postmortem when confidences drift.
 
+### `wiki_projects` + `wiki_pages` + `wiki_sources`
+
+The LLM Wiki layer is project-scoped and database-backed. A project must have a
+`wiki_projects` row before wiki operations can continue. If a project is
+missing, CLI/MCP calls return `wiki_not_initialized` and tell the user to run
+`hippo wiki init`.
+
+`wiki_pages` stores canonical markdown bodies and metadata for source, entity,
+concept, topic, analysis, overview, index, log, and schema pages. Exported
+markdown files are materialized views for Obsidian or git; SQLite is canonical.
+
+`wiki_sources`, `wiki_page_sources`, `wiki_links`, and `wiki_log` keep source
+provenance, citations, wikilink graph data, and chronological activity.
+
 ### `fragments_fts` (virtual)
 
 FTS5 mirror of `(content, summary)`. Triggers keep it synchronised on every
@@ -163,6 +177,13 @@ CLI, tests, and direct callers use the same code path as MCP clients.
 | transcript | `log_transcript` | store raw prompt / visible response / reasoning summary |
 | transcript | `get_transcript` | read current session transcript rows |
 | working | `undo_last_entry` | remove the latest ledger entry within the undo window |
+| wiki | `wiki_init` | initialize project-scoped DB wiki state |
+| wiki | `wiki_status` | report wiki state or `wiki_not_initialized` |
+| wiki | `wiki_ingest` | ingest a markdown/text source into wiki pages |
+| wiki | `wiki_query` | assemble answer context from DB wiki pages |
+| wiki | `wiki_file_answer` | file an answer as an analysis page |
+| wiki | `wiki_lint` | check wiki health |
+| wiki | `wiki_export` | materialize DB pages to markdown |
 
 ## Concurrency
 

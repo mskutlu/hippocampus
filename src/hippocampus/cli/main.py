@@ -128,8 +128,19 @@ def doctor() -> None:
     ok.append(
         f"settings: working_block_mode={settings['working_block_mode']}, "
         f"auto_end_idle_minutes={settings['auto_end_idle_minutes']}, "
-        f"semantic_weight={settings['semantic_weight']}"
+        f"semantic_weight={settings['semantic_weight']}, "
+        f"wiki_enabled={settings['wiki_enabled']}"
     )
+
+    try:
+        from hippocampus.wiki import storage as wiki_storage
+        projects = wiki_storage.list_projects(limit=1000)
+        if projects:
+            ok.append(f"wiki: {len(projects)} initialized project(s)")
+        elif settings.get("wiki_enabled"):
+            warn.append("wiki: enabled but no initialized projects (run `hippo wiki init`)")
+    except Exception as e:  # noqa: BLE001
+        warn.append(f"wiki: status failed ({e})")
 
     # Embeddings status
     try:
@@ -913,6 +924,132 @@ def observe_cmd(source: Optional[str], dry_run: bool) -> None:
         "created": created,
         "count": len(created),
     }, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# wiki (DB-backed LLM Wiki)
+# ---------------------------------------------------------------------------
+
+
+@cli.group("wiki")
+def wiki_group() -> None:
+    """Database-backed LLM Wiki workflows."""
+
+
+@wiki_group.command("init")
+@click.option("--project", "-p", default=None, help="Project key; defaults to current workspace")
+@click.option("--title", default=None, help="Human-readable wiki title")
+@click.option("--workspace-path", default=None, help="Workspace path to associate with the project")
+@click.option("--export-root", default=None, help="Where markdown files should be materialized")
+@click.option("--materialize", is_flag=True, help="Also create/export markdown files")
+def wiki_init_cmd(project: Optional[str], title: Optional[str], workspace_path: Optional[str], export_root: Optional[str], materialize: bool) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    out = tools.wiki_init(
+        project=project,
+        title=title,
+        workspace_path=workspace_path,
+        export_root=export_root,
+        materialize=materialize,
+    )
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("status")
+@click.option("--project", "-p", default=None)
+def wiki_status_cmd(project: Optional[str]) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    click.echo(json.dumps(tools.wiki_status(project=project), indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("lint")
+@click.option("--project", "-p", default=None)
+def wiki_lint_cmd(project: Optional[str]) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    click.echo(json.dumps(tools.wiki_lint(project=project), indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("export")
+@click.option("--project", "-p", default=None)
+def wiki_export_cmd(project: Optional[str]) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    click.echo(json.dumps(tools.wiki_export(project=project), indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("ingest")
+@click.argument("raw_path")
+@click.option("--project", "-p", default=None)
+@click.option("--dry-run", is_flag=True)
+@click.option("--materialize", is_flag=True)
+def wiki_ingest_cmd(raw_path: str, project: Optional[str], dry_run: bool, materialize: bool) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    out = tools.wiki_ingest(raw_path=raw_path, project=project, dry_run=dry_run, materialize=materialize)
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("query")
+@click.argument("question")
+@click.option("--project", "-p", default=None)
+@click.option("--limit", default=None, type=int)
+def wiki_query_cmd(question: str, project: Optional[str], limit: Optional[int]) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    click.echo(json.dumps(tools.wiki_query(question=question, project=project, limit=limit), indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("file-answer")
+@click.argument("title")
+@click.option("--project", "-p", default=None)
+@click.option("--stdin", "read_stdin", is_flag=True, help="Read answer markdown from stdin")
+@click.option("--content", "-c", default=None, help="Answer markdown")
+@click.option("--materialize", is_flag=True)
+def wiki_file_answer_cmd(title: str, project: Optional[str], read_stdin: bool, content: Optional[str], materialize: bool) -> None:
+    _bootstrap()
+    if read_stdin or content is None:
+        content = sys.stdin.read()
+    from hippocampus.mcp import tools
+
+    out = tools.wiki_file_answer(title=title, markdown=content or "", project=project, materialize=materialize)
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("index")
+@click.option("--project", "-p", default=None)
+@click.option("--render", "render_only", is_flag=True, help="Print rendered markdown only")
+def wiki_index_cmd(project: Optional[str], render_only: bool) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    out = tools.wiki_index(project=project)
+    if render_only and out.get("ok"):
+        click.echo(out.get("markdown", ""))
+        return
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@wiki_group.command("log")
+@click.option("--project", "-p", default=None)
+@click.option("--tail", default=20, show_default=True)
+@click.option("--render", "render_only", is_flag=True, help="Print rendered markdown only")
+def wiki_log_cmd(project: Optional[str], tail: int, render_only: bool) -> None:
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    out = tools.wiki_log(project=project, limit=tail)
+    if render_only and out.get("ok"):
+        click.echo(out.get("markdown", ""))
+        return
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
 
 
 @cli.command("install-hooks")

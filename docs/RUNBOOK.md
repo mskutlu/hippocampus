@@ -119,6 +119,29 @@ hippo inject --dry-run      # preview next injection block
 hippo doctor                # full health check
 ```
 
+## LLM Wiki operations
+
+The wiki layer is database-backed. Markdown files are optional exports. Always
+initialize a project before ingesting, querying, linting, or filing answers.
+
+```bash
+hippo wiki status --project hippocampus
+hippo wiki init --project hippocampus --materialize
+hippo wiki ingest raw/inbox/article.md --project hippocampus --dry-run
+hippo wiki ingest raw/inbox/article.md --project hippocampus --materialize
+hippo wiki query "what does the wiki say about memory?" --project hippocampus
+hippo wiki file-answer "Memory Summary" --project hippocampus --stdin
+hippo wiki lint --project hippocampus
+hippo wiki export --project hippocampus
+```
+
+If a project is missing, commands return `wiki_not_initialized`. Do not create
+ad hoc `index.md` or `log.md` files while continuing the operation. Run
+`hippo wiki init` first, then retry.
+
+SQLite is canonical for wiki pages, sources, index, and log. Use
+`hippo wiki export` to regenerate markdown files when the exported view drifts.
+
 ## Daemon control
 
 ```bash

@@ -89,6 +89,15 @@ def format_injection_block(
         "> Call `remember` when you learn something worth keeping across sessions/clients.",
         "",
     ]
+    if bool(config.get_setting("wiki_enabled")):
+        body_lines.extend(
+            [
+                "> **LLM Wiki:** For project knowledge-base work, call `wiki_status` first.",
+                "> If it returns `wiki_not_initialized`, ask the user to run `wiki_init` before ingest/query/lint/file-answer.",
+                "> Wiki pages are canonical in SQLite; markdown files are materialized exports.",
+                "",
+            ]
+        )
     body_lines.extend(bullets if bullets else ["_(no fragments stored yet)_"])
     body_lines.extend(["", config.INJECTION_MARKER_END])
     return "\n".join(body_lines) + "\n"

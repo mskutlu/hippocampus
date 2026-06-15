@@ -281,6 +281,92 @@ TOOL_SPECS: list[Tool] = [
             "properties": {"client": {"type": "string"}},
         },
     ),
+    Tool(
+        name="wiki_init",
+        description="Initialize database-backed LLM Wiki state for a project.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "title": {"type": "string"},
+                "workspace_path": {"type": "string"},
+                "export_root": {"type": "string"},
+                "materialize": {"type": "boolean", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="wiki_status",
+        description="Return DB-backed wiki status for the project, or wiki_not_initialized.",
+        inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+    ),
+    Tool(
+        name="wiki_lint",
+        description="Run wiki health checks for the project.",
+        inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+    ),
+    Tool(
+        name="wiki_export",
+        description="Materialize DB-backed wiki pages to markdown files.",
+        inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+    ),
+    Tool(
+        name="wiki_ingest",
+        description="Ingest a markdown/text source into the DB-backed project wiki. Blocks if wiki is not initialized.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "raw_path": {"type": "string"},
+                "project": {"type": "string"},
+                "dry_run": {"type": "boolean", "default": False},
+                "materialize": {"type": "boolean", "default": False},
+            },
+            "required": ["raw_path"],
+        },
+    ),
+    Tool(
+        name="wiki_query",
+        description="Return relevant DB-backed wiki pages for a question. Blocks if wiki is not initialized.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "project": {"type": "string"},
+                "limit": {"type": "integer", "default": 8, "minimum": 1, "maximum": 50},
+            },
+            "required": ["question"],
+        },
+    ),
+    Tool(
+        name="wiki_file_answer",
+        description="File a useful answer as a wiki analysis page.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "markdown": {"type": "string"},
+                "project": {"type": "string"},
+                "materialize": {"type": "boolean", "default": False},
+            },
+            "required": ["title", "markdown"],
+        },
+    ),
+    Tool(
+        name="wiki_index",
+        description="Refresh and return the rendered DB-backed wiki index.",
+        inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+    ),
+    Tool(
+        name="wiki_log",
+        description="Refresh and return the rendered DB-backed wiki log.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+            },
+        },
+    ),
 ]
 
 
@@ -304,6 +390,15 @@ TOOL_DISPATCH = {
     "get_transcript": T.get_transcript,
     "end_progress": T.end_progress,
     "undo_last_entry": T.undo_last_entry,
+    "wiki_init": T.wiki_init,
+    "wiki_status": T.wiki_status,
+    "wiki_lint": T.wiki_lint,
+    "wiki_export": T.wiki_export,
+    "wiki_ingest": T.wiki_ingest,
+    "wiki_query": T.wiki_query,
+    "wiki_file_answer": T.wiki_file_answer,
+    "wiki_index": T.wiki_index,
+    "wiki_log": T.wiki_log,
 }
 
 

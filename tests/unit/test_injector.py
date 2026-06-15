@@ -71,3 +71,17 @@ def test_backup_is_one_shot(tmp_path):
     # Backup content must stay == the original file (only written once)
     bak = target.with_suffix(target.suffix + ".pre-hippocampus.bak")
     assert bak.read_text() == "ORIGINAL\n"
+
+
+def test_format_injection_block_includes_wiki_guidance_when_enabled(hippo_env, monkeypatch):
+    from hippocampus import config
+    from hippocampus.clients.injector import format_injection_block
+
+    monkeypatch.setenv("HIPPO_WIKI_ENABLED", "true")
+    block = format_injection_block([])
+
+    assert "LLM Wiki" in block
+    assert "wiki_status" in block
+    assert "wiki_not_initialized" in block
+    # sanity check env override is active in this test process
+    assert config.get_setting("wiki_enabled") is True
