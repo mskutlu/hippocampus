@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 
@@ -36,7 +37,8 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
         for script in r["scripts"]:
             p = Path(script)
             assert p.exists()
-            assert p.stat().st_mode & 0o111  # executable
+            if os.name != "nt":
+                assert p.stat().st_mode & 0o111  # executable
             body = p.read_text()
             assert "/opt/fake/bin/hippo" in body
 

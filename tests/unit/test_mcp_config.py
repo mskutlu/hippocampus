@@ -22,6 +22,7 @@ def test_register_vscode_copilot_uses_vscode_schema(tmp_path, monkeypatch):
     fake_home.mkdir()
 
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("APPDATA", str(fake_home / "AppData" / "Roaming"))
     monkeypatch.setenv("HIPPOCAMPUS_MCP_CMD", "/opt/fake/bin/hippocampus-mcp")
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 

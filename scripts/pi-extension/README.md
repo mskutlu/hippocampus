@@ -29,7 +29,7 @@ hippo register                  # installs (or refreshes) the extension
 hippo unregister                # removes only the files we installed
 ```
 
-Run `hippo doctor` afterwards to confirm Pi shows up as `long:✓ working:✓ mcp:✓`
+Run `hippo doctor` afterwards to confirm Pi shows up as `long:ok working:ok mcp:ok`
 (the `mcp` badge here means "extension installed", not a JSON entry in any
 config file — Pi has no MCP config).
 
