@@ -30,6 +30,9 @@ import click
 
 from hippocampus import config
 
+OK_MARK = "ok"
+MISS_MARK = "x"
+
 
 # ---------------------------------------------------------------------------
 # CLI root
@@ -60,9 +63,9 @@ def _bootstrap() -> None:
 def init() -> None:
     """Create runtime dirs, initialise the DB, install mirror hooks."""
     _bootstrap()
-    click.echo(f"✓ Hippocampus home: {config.HIPPOCAMPUS_HOME}")
-    click.echo(f"✓ DB:               {config.DB_PATH}")
-    click.echo(f"✓ Vault mirror:     {config.FRAGMENTS_DIR}")
+    click.echo(f"{OK_MARK} Hippocampus home: {config.HIPPOCAMPUS_HOME}")
+    click.echo(f"{OK_MARK} DB:               {config.DB_PATH}")
+    click.echo(f"{OK_MARK} Vault mirror:     {config.FRAGMENTS_DIR}")
     click.echo("Next steps:")
     click.echo("  hippo register         # wire MCP server into all AI clients")
     click.echo("  hippo inject           # generate the auto-inject block")
@@ -109,9 +112,9 @@ def doctor() -> None:
         long_ok = config.INJECTION_MARKER_START in rules_text
         working_ok = config.WORKING_MARKER_START in rules_text
         mcp_ok = mcp_cfg.is_registered(spec)
-        badge_long = "✓" if long_ok else "✗"
-        badge_work = "✓" if working_ok else "✗"
-        badge_mcp = "✓" if mcp_ok else "✗"
+        badge_long = OK_MARK if long_ok else MISS_MARK
+        badge_work = OK_MARK if working_ok else MISS_MARK
+        badge_mcp = OK_MARK if mcp_ok else MISS_MARK
         target = "ok" if long_ok and working_ok and mcp_ok else "warn"
         line = f"{spec.label:<14} long:{badge_long} working:{badge_work} mcp:{badge_mcp}  ({spec.rules_path})"
         (ok if target == "ok" else warn).append(line)
@@ -167,7 +170,7 @@ def doctor() -> None:
             parts = []
             all_present = True
             for ev in installed:
-                ok_glyph = "✓" if installed[ev] else "✗"
+                ok_glyph = OK_MARK if installed[ev] else MISS_MARK
                 if not installed[ev]:
                     all_present = False
                 parts.append(f"{ev}:{ok_glyph}")

@@ -312,23 +312,23 @@ Expected output:
 OK  SQLite OK … fragments
 OK  Vault mirror OK …
 OK  Injection file OK …
-OK  Devin CLI      long:✓ working:✓ mcp:✓
-OK  Claude Code    long:✓ working:✓ mcp:✓
-OK  Cursor         long:✓ working:✓ mcp:✓
-OK  Codex          long:✓ working:✓ mcp:✓
-OK  OpenCode       long:✓ working:✓ mcp:✓
-OK  Windsurf       long:✓ working:✓ mcp:✓
-OK  Antigravity    long:✓ working:✓ mcp:✓
-OK  VS Code Copilot long:✓ working:✓ mcp:✓
-OK  Pi Agent       long:✓ working:✓ mcp:✓        # mcp:✓ here means "extension installed"
+OK  Devin CLI      long:ok working:ok mcp:ok
+OK  Claude Code    long:ok working:ok mcp:ok
+OK  Cursor         long:ok working:ok mcp:ok
+OK  Codex          long:ok working:ok mcp:ok
+OK  OpenCode       long:ok working:ok mcp:ok
+OK  Windsurf       long:ok working:ok mcp:ok
+OK  Antigravity    long:ok working:ok mcp:ok
+OK  VS Code Copilot long:ok working:ok mcp:ok
+OK  Pi Agent       long:ok working:ok mcp:ok      # mcp:ok here means "extension installed"
 OK  launchd plist OK                              # macOS only
 OK  settings: working_block_mode=per_client …
 OK  embeddings: N/N covered (model=…, dim=…)      # only if [semantic] installed
-OK  hooks/devin       SessionStart:✓ UserPromptSubmit:✓ PostCompaction:✓  # only if you ran hippo install-hooks
-OK  hooks/claude-code SessionStart:✓ UserPromptSubmit:✓
-OK  hooks/cursor      sessionStart:✓ beforeSubmitPrompt:✓
-OK  hooks/antigravity SessionStart:✓ UserPromptSubmit:✓
-OK  hooks/pi          session_start:✓ before_agent_start:✓ session_shutdown:✓  # via the bundled extension
+OK  hooks/devin       SessionStart:ok UserPromptSubmit:ok PostCompaction:ok  # only if you ran hippo install-hooks
+OK  hooks/claude-code SessionStart:ok UserPromptSubmit:ok
+OK  hooks/cursor      sessionStart:ok beforeSubmitPrompt:ok
+OK  hooks/antigravity SessionStart:ok UserPromptSubmit:ok
+OK  hooks/pi          session_start:ok before_agent_start:ok session_shutdown:ok  # via the bundled extension
 ```
 
 ---
