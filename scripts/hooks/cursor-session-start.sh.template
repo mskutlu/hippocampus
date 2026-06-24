@@ -37,10 +37,35 @@ detect_hippo_context() {
     export HIPPOCAMPUS_CWD="${HIPPOCAMPUS_CWD:-${PWD:-}}"
 }
 
+# Cursor launches the MCP server with WORKSPACE_FOLDER_PATHS set but spawns the
+# hooks from an unstable cwd (/, $HOME, ...). Keying the session off the
+# workspace root makes the CLI derive the SAME session_key the MCP server uses,
+# so the hook-opened session and the AI's MCP tool calls share one working
+# memory instead of splitting in two.
+export_workspace_from_json() {
+    local json="${1:-}"
+    [[ -z "$json" ]] && return 0
+    local ws
+    ws="$(printf '%s' "$json" | python3 -c '
+import json, sys
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data = {}
+roots = data.get("workspace_roots")
+print(roots[0] if isinstance(roots, list) and roots else "")
+' 2>/dev/null || true)"
+    if [[ -n "$ws" ]]; then
+        export WORKSPACE_FOLDER_PATHS="$ws"
+    fi
+}
+
 detect_hippo_context
 
-# Drain stdin so Cursor's writer never blocks on a full pipe.
-cat >/dev/null 2>&1 || true
+# Capture Cursor's stdin payload (session_id, model, workspace_roots, ...).
+# Reading it also prevents Cursor's writer from blocking on a full pipe.
+INPUT_JSON="$(cat 2>/dev/null || true)"
+export_workspace_from_json "$INPUT_JSON"
 
 # Best-effort: open/rotate a session for this client so `hippo progress show`
 # reflects reality from turn 0.

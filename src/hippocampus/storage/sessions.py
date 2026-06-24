@@ -112,14 +112,56 @@ def _detect_cwd() -> str | None:
         return raw or None
 
 
+def _detect_workspace() -> str | None:
+    """Best-effort workspace-root detection for GUI editors (Cursor, VS Code).
+
+    GUI editors spawn the MCP server and the lifecycle hooks WITHOUT a shared
+    controlling TTY and from an arbitrary, inconsistent cwd (``/``, ``$HOME``,
+    the workspace, ...). They do, however, surface the workspace root: Cursor
+    and VS Code set ``WORKSPACE_FOLDER_PATHS`` in the MCP server's environment,
+    and the Cursor hooks export the same value (derived from the
+    ``workspace_roots`` they receive on stdin). Keying the session off the
+    workspace instead of the flaky cwd is what keeps the MCP-tool session and
+    the hook-driven session unified for these clients.
+
+    Returns the first (resolved) workspace root, or ``None`` when no workspace
+    signal is present (e.g. terminal clients, which fall back to TTY + cwd).
+    """
+    raw = (
+        os.environ.get("HIPPOCAMPUS_WORKSPACE")
+        or os.environ.get("WORKSPACE_FOLDER_PATHS")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    # Multi-root workspaces join paths with os.pathsep (":" POSIX / ";" Win).
+    # POSIX paths contain no ":", so this split is safe; take the first root so
+    # the MCP server and the hooks agree on a single stable key.
+    first = raw.split(os.pathsep)[0].strip()
+    if not first:
+        return None
+    try:
+        return str(Path(first).resolve())
+    except OSError:
+        return first
+
+
 def derive_session_key(session_key: str | None = None) -> str:
     """Return the stable context key for this client process.
 
     Precedence:
       1. explicit argument / HIPPOCAMPUS_SESSION_KEY
-      2. terminal TTY or terminal-session env + cwd
-      3. cwd-only
-      4. "default" for non-terminal contexts with no cwd signal
+      2. terminal TTY (or terminal-session env) + cwd   — terminal clients
+      3. workspace root (WORKSPACE_FOLDER_PATHS)         — GUI editors w/o a TTY
+      4. cwd-only
+      5. "default" for non-terminal contexts with no signal
+
+    GUI editors (Cursor, VS Code) are keyed off the workspace root rather than
+    cwd: they launch the MCP server and the hooks from different, unstable cwds,
+    so the workspace is the only signal both sides share. Without this, the AI's
+    own MCP tool calls (log_progress / get_progress / end_progress) land in a
+    different session than the hook-injected snapshot it reads, splitting working
+    memory. Terminal clients keep their tty+cwd key unchanged.
     """
     explicit = (session_key or os.environ.get("HIPPOCAMPUS_SESSION_KEY") or "").strip()
     if explicit:
@@ -133,13 +175,19 @@ def derive_session_key(session_key: str | None = None) -> str:
         or os.environ.get("TMUX_PANE")
         or os.environ.get("STY")
     )
+    # Workspace only substitutes for cwd in a pure GUI context (no shared TTY or
+    # terminal-session signal). Terminal clients keep their existing tty+cwd key
+    # untouched so their already-working sessions don't churn.
+    workspace = None if (tty or term_hint) else _detect_workspace()
 
     parts: list[str] = []
     if tty:
         parts.append(f"tty={tty}")
     elif term_hint:
         parts.append(f"term={term_hint}")
-    if cwd:
+    if workspace:
+        parts.append(f"ws={workspace}")
+    elif cwd:
         parts.append(f"cwd={cwd}")
     if not parts:
         return "default"
@@ -151,7 +199,9 @@ def derive_session_key(session_key: str | None = None) -> str:
         labels.append("tty-" + _safe_part(Path(tty).name or tty, fallback="tty", limit=24))
     elif term_hint:
         labels.append("term-" + _safe_part(term_hint, fallback="term", limit=24))
-    if cwd:
+    if workspace:
+        labels.append("ws-" + _safe_part(Path(workspace).name or "ws", fallback="ws", limit=32))
+    elif cwd:
         labels.append("cwd-" + _safe_part(Path(cwd).name or "cwd", fallback="cwd", limit=32))
     prefix = "-".join(labels) or "ctx"
     return _safe_part(f"{prefix}-{digest}", limit=120)

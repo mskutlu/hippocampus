@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — Cursor working memory split across two sessions
+
+Working memory silently fragmented in Cursor (it worked in terminal clients
+like Codex / Claude Code). The AI's own `log_progress` / `get_progress` /
+`end_progress` MCP calls landed in a *different* session than the one the
+`sessionStart` / `beforeSubmitPrompt` hooks read and wrote, so the injected
+snapshot never reflected the AI's logging and `end_progress` rotated the wrong
+session.
+
+- **Root cause:** `derive_session_key()` falls back to **cwd** when there is no
+  controlling TTY. Cursor is a GUI app with no shared TTY, and it launches the
+  MCP server and the hooks from *different, unstable* cwds (`/`, `$HOME`,
+  `~/.cursor`, ...), so the two sides derived different session keys
+  (`cwd-cwd-…` vs `cwd-cursor-…`). Terminal clients share one controlling TTY,
+  so their MCP server + hooks already agreed on a `tty-…` key.
+- **Fix (`storage/sessions.py`):** new `_detect_workspace()` and a workspace
+  tier in `derive_session_key()`. When there is no TTY/terminal-session signal,
+  the session is keyed off the workspace root (`WORKSPACE_FOLDER_PATHS`, which
+  Cursor/VS Code set for the MCP server) instead of the flaky cwd. Terminal
+  clients keep their exact `tty+cwd` key (workspace is only consulted when no
+  TTY/term hint is present), so their sessions don't churn.
+- **Fix (Cursor hook templates):** `cursor-session-start` and
+  `cursor-before-submit` now read the `workspace_roots` Cursor passes on stdin
+  and export `WORKSPACE_FOLDER_PATHS` before invoking the CLI, so the hooks
+  derive the same workspace key as the MCP server.
+- Added `tests/unit/test_sessions.py` covering workspace-key stability across
+  cwds, per-workspace isolation, terminal clients staying on tty+cwd, explicit
+  `HIPPOCAMPUS_SESSION_KEY` precedence, and multi-root first-path selection.
+
 ### Added — DB-backed LLM Wiki layer
 
 - Added V10 planning and implementation for project-scoped LLM Wiki state.
