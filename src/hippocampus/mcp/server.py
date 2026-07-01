@@ -257,7 +257,9 @@ TOOL_SPECS: list[Tool] = [
         name="end_progress",
         description=(
             "Close the current session and optionally distill the whole ledger into a "
-            "single long-term fragment. Call this when the task is complete. "
+            "single long-term fragment. It also force-initializes the project wiki "
+            "and writes a session summary plus lessons to the wiki log. "
+            "Call this when the task is complete. "
             "The next log_progress call will start a fresh session."
         ),
         inputSchema={
