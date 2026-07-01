@@ -35,7 +35,7 @@ _WORKING_PROTOCOL = [
     "> - When the goal is set/changed → `log_progress(kind=\"goal\", content=\"<the goal>\")`",
     ">",
     "> Use `get_progress()` to re-read the full ledger.",
-    "> Use `end_progress(distill_to_fragment=True, summary=...)` when the task is complete.",
+    "> Use `end_progress(distill_to_fragment=True, summary=...)` when the task is complete; it also writes the project wiki log.",
     ">",
     "> **This block is cross-session, cross-compaction, cross-client. Do not duplicate entries — the dedup window is 60s.**",
 ]

@@ -97,3 +97,26 @@ def test_end_progress_uses_cli_for_unknown_env_client(hippo_env, monkeypatch):
     assert out["rotated"] is True
     assert out["client"] == "cli"
     assert out["distilled_fragment"] is not None
+
+
+def test_end_progress_forces_wiki_log_with_lessons(hippo_env, tmp_path, monkeypatch):
+    from hippocampus.mcp import tools
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "codex")
+    monkeypatch.setenv("HIPPOCAMPUS_CWD", str(workspace))
+
+    tools.log_progress(kind="ask", content="Improve project closeout logging")
+    tools.log_progress(kind="decision", content="Prefer the existing wiki log over a new store")
+    tools.log_progress(kind="done", content="Added end_progress wiki summary")
+
+    out = tools.end_progress(summary="Closeout logging added")
+
+    assert out["rotated"] is True
+    assert out["wiki_log"]["ok"] is True
+    assert out["wiki_log"]["initialized"] is True
+    assert out["wiki_log"]["entry"]["kind"] == "session-summary"
+    assert "Closeout logging added" in out["wiki_log"]["page"]["markdown"]
+    assert "Lessons Learned" in out["wiki_log"]["page"]["markdown"]
+    assert "Prefer the existing wiki log over a new store" in out["wiki_log"]["page"]["markdown"]

@@ -655,6 +655,7 @@ def end_progress(
         return {"rotated": False, "reason": "no_active_session", "client": client_name}
 
     entries = ledger_store.current_entries(sid)
+    wiki_log_result = _append_session_summary_to_wiki(sid, client_name, entries, summary) if entries else None
     stored_fragment: dict | None = None
     if distill_to_fragment:
         if not entries:
@@ -679,37 +680,8 @@ def end_progress(
         "new_session_id": new_sid,
         "client": client_name,
         "distilled_fragment": stored_fragment,
+        "wiki_log": wiki_log_result,
     }
-
-
-def _derive_summary(entries: list[ledger_store.LedgerEntry]) -> str:
-    """Build a one-line summary when the caller didn't provide one."""
-    goal = next((e for e in entries if e.kind == "goal"), None)
-    if goal:
-        return f"Session summary: {goal.content[:120]}"
-    first_ask = next((e for e in entries if e.kind == "ask"), None)
-    if first_ask:
-        return f"Session summary: {first_ask.content[:120]}"
-    return "Session summary"
-
-
-def _render_ledger_as_fragment(entries: list[ledger_store.LedgerEntry], *, explicit_summary: str | None) -> str:
-    """Build the full fragment body from a ledger."""
-    lines: list[str] = []
-    if explicit_summary:
-        lines.append(explicit_summary)
-        lines.append("")
-    by_kind: dict[str, list[str]] = {}
-    for e in entries:
-        by_kind.setdefault(e.kind, []).append(f"- {e.content}")
-    for kind in ("goal", "decision", "done", "blocker", "next", "ask", "note"):
-        items = by_kind.get(kind, [])
-        if not items:
-            continue
-        lines.append(f"**{kind.title()}**")
-        lines.extend(items)
-        lines.append("")
-    return "\n".join(lines).strip()
 
 
 def auto_end_idle_sessions() -> dict[str, Any]:
@@ -900,8 +872,64 @@ def wiki_log(project: str | None = None, limit: int = 20) -> dict[str, Any]:
     }
 
 
+def _append_session_summary_to_wiki(
+    session_id: str,
+    client_name: str,
+    entries: list[ledger_store.LedgerEntry],
+    explicit_summary: str | None,
+) -> dict[str, Any]:
+    from hippocampus.wiki import export, log as wiki_log_mod, projects, storage, workspace
+
+    project_key = projects.derive_project_key()
+    project = storage.get_project_by_key(project_key)
+    initialized = project is None
+    if initialized:
+        workspace.init_project(
+            project=project_key,
+            workspace_path=projects.current_workspace(),
+            materialize=False,
+        )
+        project = storage.get_project_by_key(project_key)
+    if project is None:
+        return {"ok": False, "reason": "wiki_init_failed", "project_key": project_key}
+
+    resolved_summary = (explicit_summary or _derive_summary(entries)).strip() or "Session summary"
+    transcript_entries = transcript_store.current_entries(session_id, limit=500)
+    lessons = _extract_lessons(entries, transcript_entries)
+    details = _render_session_log_details(
+        session_id=session_id,
+        client_name=client_name,
+        summary=resolved_summary,
+        entries=entries,
+        lessons=lessons,
+    )
+    entry = storage.append_log(
+        project.id,
+        kind="session-summary",
+        title=resolved_summary,
+        details=details,
+        metadata={
+            "session_id": session_id,
+            "client": client_name,
+            "lessons": lessons,
+        },
+    )
+    page = wiki_log_mod.refresh(project)
+    written_paths: list[str] = []
+    if bool(config.get_setting("wiki_materialize_default")):
+        written_paths = export.materialize(project).get("written_paths", [])
+    return {
+        "ok": True,
+        "initialized": initialized,
+        "project": project.to_dict(),
+        "entry": entry.to_dict(),
+        "page": page.to_dict(),
+        "lessons": lessons,
+        "written_paths": written_paths,
+    }
+
+
 def _derive_summary(entries: list[ledger_store.LedgerEntry]) -> str:
-    """Build a one-line summary when the caller didn't provide one."""
     goal = next((e for e in entries if e.kind == "goal"), None)
     if goal:
         return f"Session summary: {goal.content[:120]}"
@@ -912,7 +940,6 @@ def _derive_summary(entries: list[ledger_store.LedgerEntry]) -> str:
 
 
 def _render_ledger_as_fragment(entries: list[ledger_store.LedgerEntry], *, explicit_summary: str | None) -> str:
-    """Build the full fragment body from a ledger."""
     lines: list[str] = []
     if explicit_summary:
         lines.append(explicit_summary)
@@ -927,4 +954,64 @@ def _render_ledger_as_fragment(entries: list[ledger_store.LedgerEntry], *, expli
         lines.append(f"**{kind.title()}**")
         lines.extend(items)
         lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _extract_lessons(entries: list[ledger_store.LedgerEntry], transcript_entries: Sequence[Any]) -> list[str]:
+    lessons: list[str] = []
+    for e in entries:
+        if e.kind in {"decision", "blocker"}:
+            lessons.append(f"{e.kind}: {e.content}")
+        elif e.kind == "note" or _looks_like_lesson(e.content):
+            lessons.append(e.content)
+    for e in transcript_entries:
+        if e.role in {"assistant_summary", "reasoning_summary", "user"} and _looks_like_lesson(e.content):
+            lessons.append(_first_line(e.content))
+    return _unique(lessons)[:12]
+
+
+def _looks_like_lesson(text: str) -> bool:
+    return bool(re.search(r"\b(learned|lesson|remember|prefer|avoid|always|never|must|should)\b", text, re.I))
+
+
+def _first_line(text: str, limit: int = 180) -> str:
+    line = next(iter((text or "").strip().splitlines()), "").strip()
+    return line[:limit].rstrip()
+
+
+def _unique(items: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        cleaned = item.strip()
+        key = cleaned.casefold()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def _render_session_log_details(
+    *,
+    session_id: str,
+    client_name: str,
+    summary: str,
+    entries: list[ledger_store.LedgerEntry],
+    lessons: list[str],
+) -> str:
+    lines = [
+        f"Session: `{session_id}`",
+        f"Client: `{client_name}`",
+        "",
+        "### Summary",
+        "",
+        summary,
+        "",
+    ]
+    if lessons:
+        lines.extend(["### Lessons Learned", ""])
+        lines.extend(f"- {lesson}" for lesson in lessons)
+        lines.append("")
+    lines.extend(["### Ledger", "", _render_ledger_as_fragment(entries, explicit_summary=None)])
     return "\n".join(lines).strip()
