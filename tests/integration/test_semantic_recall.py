@@ -137,6 +137,29 @@ def test_hybrid_recall_uses_semantic_when_fts_fails(semantic_env, monkeypatch):
     assert "idempotency" in out["fragments"][0]["summary"]
 
 
+def test_rrf_consensus_beats_single_source(hippo_env, monkeypatch):
+    """RRF: a hit ranked in BOTH lists outranks hits that top only one list."""
+    from hippocampus.embeddings import search as semantic_search
+    from hippocampus.mcp import tools
+    from hippocampus.storage import fragments as F
+
+    a = F.create("alpha only in fts", summary="fts-only")
+    b = F.create("bravo in both lists", summary="consensus")
+    c = F.create("charlie only semantic", summary="sem-only")
+
+    monkeypatch.setattr(F, "search_fts", lambda **kw: [a, b])
+    monkeypatch.setattr(
+        semantic_search, "semantic_topk", lambda q, k=5: [(c.id, 0.42), (b.id, 0.40)]
+    )
+    monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "pytest")
+
+    out = tools.recall(query="anything", limit=3)
+    assert out["count"] == 3
+    assert out["fragments"][0]["id"] == b.id
+    assert out["fragments"][0]["scores"]["fts_rank"] == 2
+    assert out["fragments"][0]["scores"]["semantic_rank"] == 2
+
+
 def test_recall_falls_back_to_fts_without_provider(hippo_env, monkeypatch):
     """When no embedding provider is configured, recall still works (FTS only)."""
     import hippocampus.embeddings as E
