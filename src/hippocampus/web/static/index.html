@@ -296,9 +296,10 @@ async function runRecall() {
   const out = document.getElementById('recall-out');
   if (res.count === 0) { out.innerHTML = '<em>no hits</em>'; return; }
   out.innerHTML = `<div class="mono">semantic_weight=${res.semantic_weight}, semantic_available=${res.semantic_available}</div>
-    <table style="margin-top:8px"><thead><tr><th>fts</th><th>sem</th><th>conf</th><th>summary</th></tr></thead><tbody>${
+    <table style="margin-top:8px"><thead><tr><th>fts#</th><th>sem#</th><th>cos</th><th>conf</th><th>summary</th></tr></thead><tbody>${
     res.fragments.map(f => `<tr onclick="openFragment('${f.id}')" style="cursor:pointer">
-      <td class="hit-score">${f.scores?.fts ?? '—'}</td>
+      <td class="hit-score">${f.scores?.fts_rank ?? '—'}</td>
+      <td class="hit-score">${f.scores?.semantic_rank ?? '—'}</td>
       <td class="hit-score">${f.scores?.semantic ?? '—'}</td>
       <td>${f.confidence.toFixed(2)}</td>
       <td>${escapeHtml(f.summary || f.content.slice(0,120))}</td>

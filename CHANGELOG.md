@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — recall() hybrid fusion now uses weighted RRF
+
+`recall()` previously blended a rank-normalised FTS score (`1/(1+rank)`)
+directly with raw cosine similarity. The two live on different scales —
+cosine values cluster in a narrow model-dependent band — so `semantic_weight`
+was hard to tune and one source could silently dominate.
+
+- Candidates are now fused with weighted Reciprocal Rank Fusion:
+  `final = (1-w)/(60+fts_rank) + w/(60+semantic_rank)`. Only rank order
+  matters, so the fusion is insensitive to score-scale mismatch and hits
+  confirmed by both sources rise (consensus effect).
+- `semantic_weight` keeps its meaning (0.0 = FTS only, 1.0 = semantic only);
+  fallback behaviour when either source is unavailable is unchanged.
+- Response `scores` now reports `fts_rank` / `semantic_rank` (1-based) plus
+  the raw cosine as `semantic`; the web UI recall table shows the ranks.
+- Added `tests/integration/test_semantic_recall.py::test_rrf_consensus_beats_single_source`.
+
 ### Fixed — Cursor working memory split across two sessions
 
 Working memory silently fragmented in Cursor (it worked in terminal clients
