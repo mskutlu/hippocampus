@@ -65,6 +65,14 @@ def _as_dict(frag) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+_RRF_K = 60  # standard RRF constant
+
+
+def _rrf(rank: int | None) -> float:
+    """Reciprocal-rank contribution for a 1-based rank; 0 when absent."""
+    return 1.0 / (_RRF_K + rank) if rank else 0.0
+
+
 def recall(
     query: str,
     limit: int = 5,
@@ -73,12 +81,14 @@ def recall(
 ) -> dict[str, Any]:
     """Hybrid FTS + semantic search. Every returned hit is boosted.
 
-    Score blend:
-        final = fts_rank_norm * (1 - semantic_weight) + cosine * semantic_weight
+    Candidates are fused with weighted Reciprocal Rank Fusion (RRF):
+        final = (1 - semantic_weight) / (60 + fts_rank)
+              + semantic_weight / (60 + semantic_rank)
 
-    `semantic_weight` is a setting (default 0.5). When embeddings aren't
-    available, we fall back to pure FTS. When FTS returns nothing, we fall
-    back to pure semantic.
+    Rank-based fusion sidesteps the scale mismatch between FTS rank scores
+    and raw cosine values. `semantic_weight` is a setting (default 0.5).
+    When embeddings aren't available, we fall back to pure FTS. When FTS
+    returns nothing, we fall back to pure semantic.
     """
     _ensure_bootstrapped()
 
@@ -102,26 +112,27 @@ def recall(
             ) if sanitised else []
         except Exception:
             fts_hits = []
-    fts_scores: dict[str, float] = {}
+    fts_ranks: dict[str, int] = {}
     fts_frags: dict[str, Any] = {}
     for rank_idx, f in enumerate(fts_hits):
-        # Rank-based normalised score in (0, 1]. Position 0 -> 1.0, fades.
-        fts_scores[f.id] = 1.0 / (1.0 + rank_idx)
+        fts_ranks[f.id] = rank_idx + 1
         fts_frags[f.id] = f
 
     # --- Semantic candidates ------------------------------------------------
-    semantic_scores: dict[str, float] = {}
+    semantic_ranks: dict[str, int] = {}
+    semantic_scores: dict[str, float] = {}  # raw cosine, for diagnostics only
     semantic_available = False
     try:
         from hippocampus.embeddings import search as semantic_search  # lazy
         sem_hits = semantic_search.semantic_topk(query, k=pool_size)
-        for fid, score in sem_hits:
+        for rank_idx, (fid, score) in enumerate(sem_hits):
+            semantic_ranks[fid] = rank_idx + 1
             semantic_scores[fid] = max(0.0, float(score))
         semantic_available = len(sem_hits) > 0
     except Exception:
         semantic_available = False
 
-    if not fts_scores and not semantic_scores:
+    if not fts_ranks and not semantic_ranks:
         return {
             "query": query,
             "count": 0,
@@ -130,20 +141,20 @@ def recall(
             "semantic_weight": 0.0,
         }
 
-    # --- Blend --------------------------------------------------------------
+    # --- Fuse (weighted RRF) --------------------------------------------------
     w_sem = float(config.get_setting("semantic_weight") or 0.5)
     if not semantic_available:
         w_sem = 0.0
-    if not fts_scores:
+    if not fts_ranks:
         w_sem = 1.0
     w_fts = 1.0 - w_sem
 
-    all_ids = set(fts_scores) | set(semantic_scores)
+    all_ids = set(fts_ranks) | set(semantic_ranks)
     ranked: list[tuple[str, float]] = []
     for fid in all_ids:
         combined = (
-            fts_scores.get(fid, 0.0) * w_fts
-            + semantic_scores.get(fid, 0.0) * w_sem
+            _rrf(fts_ranks.get(fid)) * w_fts
+            + _rrf(semantic_ranks.get(fid)) * w_sem
         )
         ranked.append((fid, combined))
     ranked.sort(key=lambda t: -t[1])
@@ -185,7 +196,8 @@ def recall(
                 "pinned": f.pinned,
                 "associated_with": f.associated_with,
                 "scores": {
-                    "fts": round(fts_scores.get(f.id, 0.0), 4),
+                    "fts_rank": fts_ranks.get(f.id),
+                    "semantic_rank": semantic_ranks.get(f.id),
                     "semantic": round(semantic_scores.get(f.id, 0.0), 4),
                 },
             }
