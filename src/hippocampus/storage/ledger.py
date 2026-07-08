@@ -217,8 +217,9 @@ def grouped_for_render(
     nexts = list(reversed(buckets["next"]))[:max_next]
     notes = list(reversed(buckets["note"]))[:max_notes]
 
-    # Goal: first explicit goal, else first ask if any
-    goal = buckets["goal"][0] if buckets["goal"] else (buckets["ask"][0] if buckets["ask"] else None)
+    # Goal: latest explicit goal (protocol logs a new one when the goal
+    # changes), else first ask if any
+    goal = buckets["goal"][-1] if buckets["goal"] else (buckets["ask"][0] if buckets["ask"] else None)
 
     # Blockers: only unresolved, oldest first (so they feel like a queue)
     blockers = [e for e in buckets["blocker"] if not e.resolved]

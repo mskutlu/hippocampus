@@ -1,7 +1,7 @@
 """Hippocampus MCP server — stdio transport.
 
 Exposes the 8 tools from `hippocampus.mcp.tools` to any MCP-compatible AI
-client (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity, ...).
+client (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity, ZCode, ...).
 
 Logging goes to stderr + a log file only — never stdout, which is reserved for
 JSON-RPC messages by the stdio transport.
@@ -179,6 +179,8 @@ TOOL_SPECS: list[Tool] = [
             "other context -> 'note'. "
             "The entry survives compaction because the WORKING block is re-injected "
             "into the client's always-on rules file on every turn. "
+            "The result echoes the session's current goal and handoff_path — if your "
+            "context was compacted, trust them over any summarized goal. "
             "Any frag_... ids referenced in content are boosted as if recalled. "
             "Dedup window: identical entries within 60s are merged."
         ),
@@ -210,6 +212,20 @@ TOOL_SPECS: list[Tool] = [
                 "full": {"type": "boolean", "default": False},
                 "client": {"type": "string"},
             },
+        },
+    ),
+    Tool(
+        name="get_handoff",
+        description=(
+            "Return the session's handoff document — a full, continuously-updated "
+            "markdown snapshot of the task (main goal, done, blockers, decisions, "
+            "next steps). Call this after any context compaction/summarization, or "
+            "when resuming work, to re-anchor on the authoritative main goal. "
+            "Falls back to the most recent session's handoff when none is active."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {"client": {"type": "string"}},
         },
     ),
     Tool(
@@ -388,6 +404,7 @@ TOOL_DISPATCH = {
     "get_stats": T.get_stats,
     "log_progress": T.log_progress,
     "get_progress": T.get_progress,
+    "get_handoff": T.get_handoff,
     "log_transcript": T.log_transcript,
     "get_transcript": T.get_transcript,
     "end_progress": T.end_progress,
