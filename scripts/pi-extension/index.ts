@@ -3,7 +3,7 @@
  *
  * Pi deliberately ships without native MCP. This extension closes that gap:
  *
- *   1. Re-exposes all 13 Hippocampus MCP tools through `pi.registerTool()`
+ *   1. Re-exposes the Hippocampus MCP tools through `pi.registerTool()`
  *      with their canonical JSON Schemas (mirrored as TypeBox so the LLM
  *      sees the same surface as Devin / Claude Code / etc).
  *   2. Spawns the `hippocampus-mcp` stdio server as a singleton child and
@@ -326,6 +326,9 @@ const TOOL_SCHEMAS = {
 		full: Type.Optional(Type.Boolean()),
 		client: Type.Optional(Type.String()),
 	}),
+	get_handoff: Type.Object({
+		client: Type.Optional(Type.String()),
+	}),
 	log_transcript: Type.Object({
 		role: Type.Union([
 			Type.Literal("user"),
@@ -374,6 +377,8 @@ const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
 		"WORKING MEMORY — append one entry to the current session's ledger. Call this reflexively: every ask -> log_progress(kind='ask', ...); every completed action -> kind='done'; decisions -> 'decision'; blockers -> 'blocker'; planned next steps -> 'next'; goal changes -> 'goal'; other context -> 'note'. The entry survives compaction because the WORKING block is re-injected into the client's always-on rules file on every turn. Any frag_... ids referenced in content are boosted as if recalled. Dedup window: identical entries within 60s are merged.",
 	get_progress:
 		"Return the current session's ledger (or full history). Call this when you need more detail than the injected WORKING block shows.",
+	get_handoff:
+		"Return the session's handoff document — a full, continuously-updated markdown snapshot of the task (main goal, done, blockers, decisions, next steps). Call after any context compaction/summarization, or when resuming work, to re-anchor on the authoritative main goal.",
 	log_transcript:
 		"Store raw/visible transcript content for the current session. Use user for raw prompts, assistant for visible responses, and reasoning_summary for concise visible reasoning summaries. Do not store hidden chain-of-thought.",
 	get_transcript:
@@ -396,6 +401,7 @@ const TOOL_LABELS: Record<ToolName, string> = {
 	get_stats: "Hippocampus stats",
 	log_progress: "Log progress",
 	get_progress: "Get progress",
+	get_handoff: "Get handoff",
 	log_transcript: "Log transcript",
 	get_transcript: "Get transcript",
 	end_progress: "End progress",
