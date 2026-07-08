@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Sequence
 
 from hippocampus import config
@@ -361,11 +362,20 @@ def _refresh_working_block(client: str, session_key: str | None = None) -> None:
         entries = []
         started_at = None
 
+    handoff_path: str | None = None
+    if sid is not None:
+        from hippocampus import handoff as handoff_mod
+
+        candidate = handoff_mod.handoff_path(sid)
+        if candidate.exists():
+            handoff_path = str(candidate)
+
     block = format_working_block(
         session_id=sid,
         client=client,
         started_at=started_at,
         entries=entries,
+        handoff_path=handoff_path,
     )
     upsert_working_block(
         spec.rules_path, block,
@@ -380,6 +390,46 @@ def _session_row(session_id: str) -> dict | None:
     with get_ro_conn() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
     return dict(row) if row else None
+
+
+def _write_session_handoff(
+    session_id: str,
+    client: str,
+    entries: list | None = None,
+    *,
+    status: str = "active",
+    final_summary: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Write the session's handoff file (best-effort).
+
+    Returns (handoff_path, current_goal_content); (None, goal) when the
+    feature is disabled or the write fails.
+    """
+    from hippocampus import handoff as handoff_mod
+
+    if entries is None:
+        try:
+            entries = ledger_store.current_entries(session_id)
+        except Exception:
+            entries = []
+    goal_entry = handoff_mod.current_goal(entries)
+    goal = goal_entry.content if goal_entry else None
+    if not handoff_mod.enabled():
+        return None, goal
+    try:
+        row = _session_row(session_id) or {}
+        path, _ = handoff_mod.write_handoff(
+            session_id=session_id,
+            client=client,
+            entries=entries,
+            session_key=row.get("session_key"),
+            started_at=row.get("started_at"),
+            status=status,
+            final_summary=final_summary,
+        )
+        return str(path), goal
+    except Exception:
+        return None, goal
 
 
 def _current_context(client_name: str) -> tuple[str, str]:
@@ -515,10 +565,17 @@ def log_progress(
         # Best-effort enrichment; never break log_progress.
         auto_boosted = []
 
+    # Handoff first so the fresh working block can advertise its path.
+    handoff_path, goal = _write_session_handoff(session_id, client_name)
     _refresh_working_block(client_name)
+    # `goal` is echoed on every call so the authoritative goal re-enters the
+    # model's context via the tool-result channel — compaction-proof even for
+    # clients with no lifecycle hooks.
     return {
         "logged": True,
         "entry": entry.to_dict(),
+        "goal": goal,
+        "handoff_path": handoff_path,
         "boosted_fragments": referenced_ids,
         "auto_boosted_fragments": auto_boosted,
         "demoted_fragment_id": demoted_id,
@@ -579,6 +636,7 @@ def undo_last_entry(client: str | None = None) -> dict[str, Any]:
 
     deleted = ledger_store.delete_last_entry(sid)
     _refresh_working_block(client_name)
+    _write_session_handoff(sid, client_name)
     return {"undone": True, "entry": deleted.to_dict() if deleted else None}
 
 
@@ -588,13 +646,84 @@ def get_progress(client: str | None = None, full: bool = False) -> dict[str, Any
     try:
         sid = sessions.current_session_id(client_name, open_if_missing=False)
     except RuntimeError:
-        return {"client": client_name, "session_id": None, "entries": []}
+        return {"client": client_name, "session_id": None, "goal": None, "entries": []}
 
     entries = ledger_store.current_entries(sid)
+    from hippocampus import handoff as handoff_mod
+
+    goal_entry = handoff_mod.current_goal(entries)
+    handoff_file = handoff_mod.handoff_path(sid)
     payload = [e.to_dict() for e in entries]
     if not full:
         payload = payload[-50:]  # last 50 is usually plenty
-    return {"client": client_name, "session_id": sid, "count": len(entries), "entries": payload}
+    return {
+        "client": client_name,
+        "session_id": sid,
+        "goal": goal_entry.content if goal_entry else None,
+        "handoff_path": str(handoff_file) if handoff_file.exists() else None,
+        "count": len(entries),
+        "entries": payload,
+    }
+
+
+def get_handoff(client: str | None = None) -> dict[str, Any]:
+    """Return the handoff document for the current session.
+
+    When no session is active for this client+session_key, falls back to the
+    most recent session's handoff — that is the resume path: a fresh session
+    (e.g. after a crash, restart, or compaction gone wrong) can call this to
+    recover the goal and the full task state.
+    """
+    _ensure_bootstrapped()
+    from hippocampus import handoff as handoff_mod
+
+    client_name = _client_name(client)
+    session_key = sessions.derive_session_key()
+    resumed = False
+    try:
+        sid = sessions.current_session_id(client_name, session_key=session_key, open_if_missing=False)
+    except RuntimeError:
+        sid = None
+
+    entries = ledger_store.current_entries(sid) if sid else []
+    # A fresh/empty session (e.g. right after end_progress rotated, or after a
+    # restart) has nothing to hand off — fall back to the most recent prior
+    # session for this client+workspace. That is the resume path.
+    if not entries and (sid is None or not handoff_mod.handoff_path(sid).exists()):
+        from hippocampus.storage.db import get_ro_conn
+
+        with get_ro_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id FROM sessions
+                WHERE client = ? AND session_key = ? AND id IS NOT ?
+                ORDER BY started_at DESC LIMIT 1
+                """,
+                (client_name, session_key, sid),
+            ).fetchone()
+        if row:
+            sid = row["id"]
+            entries = ledger_store.current_entries(sid)
+            resumed = True
+
+    if sid is None:
+        return {"client": client_name, "session_id": None, "exists": False, "content": None}
+    goal_entry = handoff_mod.current_goal(entries)
+    path = handoff_mod.handoff_path(sid)
+    if not path.exists() and entries:
+        # Sessions predating the handoff feature: materialize on demand.
+        path_str, _ = _write_session_handoff(sid, client_name, entries)
+        path = Path(path_str) if path_str else path
+
+    return {
+        "client": client_name,
+        "session_id": sid,
+        "resumed_from_previous_session": resumed,
+        "goal": goal_entry.content if goal_entry else None,
+        "path": str(path),
+        "exists": path.exists(),
+        "content": path.read_text(encoding="utf-8") if path.exists() else None,
+    }
 
 
 def log_transcript(
@@ -683,6 +812,10 @@ def end_progress(
         )
         stored_fragment = _as_dict(frag)
 
+    handoff_path, _ = _write_session_handoff(
+        sid, client_name, entries, status="completed", final_summary=summary
+    )
+
     new_sid = sessions.rotate(client_name)
     _refresh_working_block(client_name)
 
@@ -692,6 +825,7 @@ def end_progress(
         "new_session_id": new_sid,
         "client": client_name,
         "distilled_fragment": stored_fragment,
+        "handoff_path": handoff_path,
         "wiki_log": wiki_log_result,
     }
 
@@ -740,6 +874,7 @@ def auto_end_idle_sessions() -> dict[str, Any]:
             except Exception:
                 distilled_id = None
 
+        _write_session_handoff(sid, client, entries, status="auto-closed")
         sessions.close_session(sid)
         sessions.open_session(client, session_key=session_key)
         _refresh_working_block(client, session_key=session_key)

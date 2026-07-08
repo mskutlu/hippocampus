@@ -37,6 +37,11 @@ _WORKING_PROTOCOL = [
     "> Use `get_progress()` to re-read the full ledger.",
     "> Use `end_progress(distill_to_fragment=True, summary=...)` when the task is complete; it also writes the project wiki log.",
     ">",
+    "> **Compaction recovery:** every `log_progress` result echoes the current `goal` and the",
+    "> `handoff_path` of this session's handoff file. If your context was compacted/summarized",
+    "> — or the goal feels uncertain — call `get_handoff()` (or read the handoff file) and",
+    "> re-anchor on its **Main goal** before continuing. Never trust a summarized goal over it.",
+    ">",
     "> **This block is cross-session, cross-compaction, cross-client. Do not duplicate entries — the dedup window is 60s.**",
 ]
 
@@ -115,6 +120,7 @@ def format_working_block(
     started_at: str | None,
     entries: Iterable[LedgerEntry] | None,
     content_max: int = config.WORKING_CONTENT_MAX_CHARS,
+    handoff_path: str | None = None,
 ) -> str:
     """Render the per-session working-memory block."""
     lines: list[str] = [
@@ -145,6 +151,11 @@ def format_working_block(
         f"**Session**: `{session_id}` · client: `{client}` · started: {_fmt_time(started_at)} UTC · turn: {grouped['turn_count']}"
     )
     lines.append("")
+    if handoff_path:
+        lines.append(
+            f"**Handoff file** (full unabridged session log): `{handoff_path}`"
+        )
+        lines.append("")
 
     # Goal
     if grouped["goal"]:

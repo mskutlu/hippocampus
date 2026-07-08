@@ -6,7 +6,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │ AI Clients (each over MCP stdio)                              │
 │  Devin · Claude Code · Codex · OpenCode · Windsurf            │
-│  · Antigravity · VS Code Copilot · Pi via extension           │
+│  · Antigravity · VS Code Copilot · ZCode · Pi via extension   │
 └───────────────────────┬───────────────────────────────────────┘
                         │
                         ▼
@@ -49,6 +49,7 @@
 │   ~/.codeium/windsurf/memories/global_rules.md                │
 │   ~/.antigravity/rules/global_rules.md                        │
 │   ~/.copilot/instructions/hippocampus.instructions.md         │
+│   ~/.zcode/AGENTS.md                                          │
 │   ~/.pi/agent/AGENTS.md                                       │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -158,7 +159,7 @@ feedback, or an explicit decay cycle.
 
 ## MCP surface
 
-Fifteen tools, all plain Python functions in `hippocampus.mcp.tools` so the
+All tools are plain Python functions in `hippocampus.mcp.tools` so the
 CLI, tests, and direct callers use the same code path as MCP clients.
 
 | Layer | Tool | Purpose |
@@ -171,9 +172,10 @@ CLI, tests, and direct callers use the same code path as MCP clients.
 | long-term | `list_fragments` | admin query |
 | long-term | `top_fragments` | top-N for injection |
 | long-term | `get_stats` | dashboard |
-| working | `log_progress` | append a ledger entry + refresh the working block |
-| working | `get_progress` | read the current ledger |
-| working | `end_progress` | close session, optionally distill to long-term fragment |
+| working | `log_progress` | append a ledger entry + refresh the working block + rewrite the handoff file; result echoes the current goal |
+| working | `get_progress` | read the current ledger (includes current goal + handoff path) |
+| working | `get_handoff` | read the session's handoff document (falls back to the previous session — the resume path) |
+| working | `end_progress` | close session, optionally distill to long-term fragment; finalizes the handoff |
 | transcript | `log_transcript` | store raw prompt / visible response / reasoning summary |
 | transcript | `get_transcript` | read current session transcript rows |
 | working | `undo_last_entry` | remove the latest ledger entry within the undo window |

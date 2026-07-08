@@ -1,7 +1,7 @@
 # Hippocampus
 
 > Shared biologically-inspired long-term **and** short-term memory for AI assistants.
-> One backend, auto-injected into Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, and Pi.
+> One backend, auto-injected into Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, and Pi.
 
 The human brain does not record everything — it synthesizes, distills, and leaves behind fragments.
 Frequently accessed knowledge grows stronger; unused knowledge fades and is forgotten.
@@ -31,11 +31,30 @@ Hippocampus implements both as an external memory substrate for AI assistants.
   is regenerated immediately so the next turn sees the new entry.
 - **Survives compaction** because the WORKING block lives in the always-on
   rules file that every client re-injects after summarization.
+- **Goal echo** — every `log_progress` result carries the session's
+  authoritative goal + handoff path, so the true goal keeps re-entering
+  context via tool results even when a compaction event can't be hooked.
 - **Context isolation** — sessions are scoped by client plus terminal/workspace
   context, so two terminals using the same client do not share one ledger.
 - **60-second dedup** — safe to log aggressively; duplicates merge.
 - **Optional distillation** on `end_progress` turns the ledger into one
   long-term fragment.
+
+### Handoff documents — `get_handoff` / `hippo handoff`
+
+- **One markdown file per session** at `~/.hippocampus/handoffs/<session_id>.md`,
+  rewritten on every `log_progress` — main goal (+ history), where we are now,
+  done so far, open blockers, decisions, next steps, asks, notes.
+- **Unabridged** — unlike the WORKING block nothing is truncated or capped,
+  and entry `details` are included. It is the full track of the task.
+- **Compaction recovery** — after a summarization the agent re-anchors by
+  calling `get_handoff` (or reading the file); the injected protocol says to
+  trust its Main goal over any summarized goal.
+- **Resume path** — with no active session, `get_handoff` returns the most
+  recent prior session's handoff for the same client + workspace, so a new
+  session can pick up exactly where the last one stopped.
+- **History kept** — files persist after `end_progress` (`status: completed`)
+  and idle auto-close (`auto-closed`), forming a browsable log of past work.
 
 ### Transcript history — `log_transcript` / `get_transcript`
 
@@ -105,11 +124,13 @@ uv run hippo doctor
 
 The installer auto-resolves its own repo location, so you can clone into `~/src/`, `~/code/`, `~/projects/`, `/opt/hippocampus`, or anywhere else. On first run it:
 
-1. Runs `uv sync` and installs the `hippo` CLI into a repo-local `.venv/`.
+1. Runs `uv sync` and installs the `hippo` CLI into a repo-local `.venv/`, then
+   symlinks `hippo` + `hippocampus-mcp` into `~/.local/bin` (macOS/Linux) so the
+   bare `hippo` command works in every shell.
 2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
 3. Installs periodic jobs **on macOS only** (launchd agents: hourly decay, 10-minute inject, daily archive). On Linux / WSL it prints the `crontab -e` lines to paste. On Windows-native it points you at Task Scheduler.
-4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot). For Cursor this is `~/.cursor/mcp.json`. For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all 15 tools through `pi.registerTool()`.
-5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
+4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode). For Cursor this is `~/.cursor/mcp.json`, for ZCode `~/.zcode/cli/config.json`. For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all its tools through `pi.registerTool()`.
+5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for ZCode `~/.zcode/AGENTS.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
 ### Updating an existing install
@@ -138,8 +159,8 @@ What those commands update:
 - `hippo init` applies new SQLite migrations, including session keys and
   transcript history.
 - `hippo register` refreshes MCP config for Devin, Claude Code, Cursor, Codex,
-  OpenCode, Windsurf, Antigravity, VS Code Copilot, and refreshes Pi's bundled
-  extension.
+  OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, and refreshes Pi's
+  bundled extension.
 - `hippo install-hooks` refreshes lifecycle hooks for Devin, Claude Code,
   Cursor, and Antigravity.
 - `hippo inject --commit` refreshes the always-on rules files, including
@@ -320,6 +341,7 @@ OK  OpenCode       long:ok working:ok mcp:ok
 OK  Windsurf       long:ok working:ok mcp:ok
 OK  Antigravity    long:ok working:ok mcp:ok
 OK  VS Code Copilot long:ok working:ok mcp:ok
+OK  ZCode          long:ok working:ok mcp:ok
 OK  Pi Agent       long:ok working:ok mcp:ok      # mcp:ok here means "extension installed"
 OK  launchd plist OK                              # macOS only
 OK  settings: working_block_mode=per_client …
@@ -349,6 +371,10 @@ hippo progress log done     "Wrote the migration"
 hippo progress log decision "Use a single-writer consumer"
 hippo progress show --client devin
 hippo progress end --distill --summary "Shipped it"
+
+# Handoff document (full session track; also via the get_handoff MCP tool)
+hippo handoff --client devin
+hippo handoff --path-only
 
 # Transcript history
 hippo transcript log user --stdin < prompt.txt
@@ -385,12 +411,12 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 ┌──────────────────────────────────────────────────────────────┐
 │ AI Clients (via MCP stdio)                                   │
 │  Devin · Claude Code · Cursor · Codex · OpenCode · Windsurf  │
-│  · Antigravity · VS Code Copilot · Pi (via extension)        │
+│  · Antigravity · VS Code Copilot · ZCode · Pi (via extension)│
 └───────────────────────┬──────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Hippocampus MCP Server (Python, 15 tools)                    │
+│ Hippocampus MCP Server (Python, 16 tools + wiki)             │
 │   long-term: recall · remember · forget · pin · unpin ·      │
 │              get_fragment · list_fragments · top_fragments · │
 │              get_stats                                       │
@@ -436,13 +462,14 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 │   ~/.codeium/windsurf/memories/global_rules.md               │
 │   ~/.antigravity/rules/global_rules.md                       │
 │   ~/.copilot/instructions/hippocampus.instructions.md        │
+│   ~/.zcode/AGENTS.md                                         │
 │   ~/.pi/agent/AGENTS.md                                      │
 │                                                              │
 │ Each file is backed up once to <path>.pre-hippocampus.bak.   │
 │                                                              │
 │ Pi additionally gets a TypeScript extension at:              │
 │   ~/.pi/agent/extensions/hippocampus/index.ts                │
-│ which spawns the MCP server and re-exposes its 15 tools      │
+│ which spawns the MCP server and re-exposes its tools         │
 │ through Pi's native pi.registerTool() API + lifecycle hooks. │
 └──────────────────────────────────────────────────────────────┘
 ```

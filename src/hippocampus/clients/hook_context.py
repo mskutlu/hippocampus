@@ -81,6 +81,17 @@ def _working_section(client: str, *, content_max: int = 220) -> list[str]:
         g = grouped["goal"]
         out.append(f"**Goal** — [{_fmt_time(g.created_at)}] {_short(g.content, content_max)}")
         out.append("")
+    try:
+        from hippocampus import handoff as handoff_mod
+
+        hpath = handoff_mod.handoff_path(sid)
+        if hpath.exists():
+            out.append(
+                f"**Handoff file** — `{hpath}` (full session log; read it after any context compaction)"
+            )
+            out.append("")
+    except Exception:
+        pass
 
     def _emit(title: str, items, glyph: str = "-") -> None:
         if not items:
