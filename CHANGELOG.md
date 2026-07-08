@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — compaction-safe goal anchoring + per-session handoff documents
+
+Context compaction is the working-memory killer: when a client summarizes a
+long conversation, the main goal is often dropped or subtly rewritten, and we
+cannot rely on catching the compaction event (only Devin exposes a
+PostCompaction hook). Two new mechanisms make the goal recoverable without
+ever needing to observe the compaction:
+
+- **Goal echo on the tool-result channel.** Every `log_progress` result now
+  carries `goal` (the session's authoritative goal: latest `kind=goal` entry,
+  else the first ask) and `handoff_path`. Since agents call `log_progress`
+  reflexively, the true goal keeps re-entering context through tool results —
+  which survive compaction far more reliably than instructions. `get_progress`
+  returns both fields too.
+- **Handoff documents (`~/.hippocampus/handoffs/<session_id>.md`).** A full,
+  unabridged, chronological markdown snapshot of the session — main goal +
+  goal history, where we are now, done so far, open blockers, decisions, next
+  steps, asks, notes — rewritten on every `log_progress`/`undo_last_entry`.
+  Unlike the WORKING block it is never truncated and keeps entry `details`.
+  `end_progress` finalizes it (`status: completed`, final summary); idle
+  auto-close marks it `auto-closed`. Files are kept after the session ends as
+  a browsable history of past handoffs.
+- **New `get_handoff` MCP tool + `hippo handoff` CLI.** Returns the current
+  session's handoff; when the session is fresh/empty it falls back to the
+  most recent prior session for the same client+workspace — the resume path
+  after a restart, crash, or `end_progress`. Also exposed through the Pi
+  extension.
+- The WORKING block and hook payloads now advertise the handoff path, and the
+  injected protocol includes an explicit compaction-recovery instruction:
+  re-anchor on the handoff's Main goal, never trust a summarized goal over it.
+- The working block's rendered goal is now the **latest** `goal` entry instead
+  of the first (the protocol logs a new `goal` entry when the goal changes).
+- New settings: `handoff_enabled` (default true), `handoff_dir`
+  (default `~/.hippocampus/handoffs`).
+
+### Added — ZCode client support
+
+[ZCode](https://zcode.z.ai) (z.ai's desktop harness for GLM) is now a
+registered Hippocampus client.
+
+- `hippo register` writes the MCP entry to `~/.zcode/cli/config.json` under
+  ZCode's `{"mcp": {"servers": {...}}}` schema (new `zcode-json` format
+  branch). Re-registering preserves user extras on the entry, such as
+  per-tool `approval_mode`, and fixes the `HIPPOCAMPUS_CLIENT` tag for
+  entries previously imported from another agent's config.
+- `hippo inject` upserts the long-term + working blocks into
+  `~/.zcode/AGENTS.md`, which ZCode reads as user-global instructions at
+  the start of every task.
+- No lifecycle hooks: ZCode has no hook system, so (like Codex/OpenCode/
+  Windsurf) it relies on the rules file plus direct MCP tool calls.
+
 ### Changed — recall() hybrid fusion now uses weighted RRF
 
 `recall()` previously blended a rank-normalised FTS score (`1/(1+rank)`)

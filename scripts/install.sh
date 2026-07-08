@@ -33,13 +33,15 @@ echo ""
 # ---------------------------------------------------------------------------
 # 1. Install Python package (all platforms)
 # ---------------------------------------------------------------------------
-echo "==> [1/5] Installing Python package..."
+echo "==> [1/6] Installing Python package..."
 cd "$REPO_ROOT"
 if ! command -v uv >/dev/null 2>&1; then
     echo "ERROR: uv not found. Install from https://github.com/astral-sh/uv" >&2
     exit 1
 fi
-uv sync --quiet
+# --inexact: don't prune packages outside the lockfile (keeps user-installed
+# extras like `.[semantic]` from being uninstalled on re-runs).
+uv sync --inexact --quiet
 uv pip install -e . --quiet
 
 HIPPO_BIN="$(uv run --quiet which hippo 2>/dev/null || true)"
@@ -50,15 +52,41 @@ fi
 echo "    hippo: $HIPPO_BIN"
 
 # ---------------------------------------------------------------------------
-# 2. Initialise runtime + DB (all platforms)
+# 2. Expose the CLI on PATH (macOS / Linux)
+#    The entry points live inside the repo's .venv; without a link the bare
+#    `hippo` command silently disappears from new shells.
 # ---------------------------------------------------------------------------
-echo "==> [2/5] Initialising runtime..."
+echo "==> [2/6] Linking hippo into ~/.local/bin..."
+if [[ "$PLATFORM" == "macos" || "$PLATFORM" == "linux" ]]; then
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$BIN_DIR"
+    HIPPO_MCP_BIN="$(dirname "$HIPPO_BIN")/hippocampus-mcp"
+    ln -sf "$HIPPO_BIN" "$BIN_DIR/hippo"
+    ln -sf "$HIPPO_MCP_BIN" "$BIN_DIR/hippocampus-mcp"
+    echo "    $BIN_DIR/hippo -> $HIPPO_BIN"
+    echo "    $BIN_DIR/hippocampus-mcp -> $HIPPO_MCP_BIN"
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) ;;
+        *)
+            echo "    NOTE: $BIN_DIR is not on your PATH. Add to your shell rc:"
+            echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+            ;;
+    esac
+else
+    echo "    Skipped on $PLATFORM — invoke via 'uv run hippo' or add"
+    echo "    $(dirname "$HIPPO_BIN") to PATH manually."
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Initialise runtime + DB (all platforms)
+# ---------------------------------------------------------------------------
+echo "==> [3/6] Initialising runtime..."
 HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" init >/dev/null
 
 # ---------------------------------------------------------------------------
-# 3. Install periodic jobs (platform-specific)
+# 4. Install periodic jobs (platform-specific)
 # ---------------------------------------------------------------------------
-echo "==> [3/5] Installing periodic jobs..."
+echo "==> [4/6] Installing periodic jobs..."
 case "$PLATFORM" in
     macos)
         LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
@@ -115,23 +143,23 @@ EOF
 esac
 
 # ---------------------------------------------------------------------------
-# 4. Register MCP server in all clients (all platforms)
+# 5. Register MCP server in all clients (all platforms)
 #    For Devin / Claude Code / Cursor / OpenCode / Windsurf / Antigravity /
-#    VS Code Copilot this drops an entry into the client's MCP config JSON. For
-#    Codex this updates ~/.codex/config.toml. For Pi
+#    VS Code Copilot / ZCode this drops an entry into the client's MCP config
+#    JSON. For Codex this updates ~/.codex/config.toml. For Pi
 #    (which has no native MCP) this installs the bundled TypeScript
 #    extension at ~/.pi/agent/extensions/hippocampus/.
 # ---------------------------------------------------------------------------
-echo "==> [4/5] Registering MCP server in all AI clients..."
+echo "==> [5/6] Registering MCP server in all AI clients..."
 HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" register || true
 
 # First injection (all platforms)
 HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" inject --commit >/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 5. Doctor
+# 6. Doctor
 # ---------------------------------------------------------------------------
-echo "==> [5/5] Running doctor..."
+echo "==> [6/6] Running doctor..."
 echo ""
 HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" doctor || true
 
