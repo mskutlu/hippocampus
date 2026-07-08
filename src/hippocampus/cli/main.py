@@ -450,11 +450,19 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool) -> None:
             started_at = (_session_row(sid) or {}).get("started_at")
         except RuntimeError:
             sid, entries, started_at = None, [], None
+        handoff_file = None
+        if sid is not None:
+            from hippocampus import handoff as handoff_mod
+
+            candidate = handoff_mod.handoff_path(sid)
+            if candidate.exists():
+                handoff_file = str(candidate)
         working_block = format_working_block(
             session_id=sid,
             client=spec.name,
             started_at=started_at,
             entries=entries,
+            handoff_path=handoff_file,
         )
 
         if dry_run:
@@ -597,6 +605,25 @@ def progress_undo(client: Optional[str]) -> None:
     from hippocampus.mcp import tools
     out = tools.undo_last_entry(client=client)
     click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@cli.command("handoff")
+@click.option("--client", "-c", default=None, help="Override HIPPOCAMPUS_CLIENT")
+@click.option("--path-only", is_flag=True, help="Print only the handoff file path")
+def handoff_cmd(client: Optional[str], path_only: bool) -> None:
+    """Show the current (or most recent) session's handoff document."""
+    if client:
+        os.environ["HIPPOCAMPUS_CLIENT"] = client
+    _bootstrap()
+    from hippocampus.mcp import tools
+    out = tools.get_handoff(client=client)
+    if path_only:
+        click.echo(out.get("path") or "")
+        return
+    if out.get("content"):
+        click.echo(out["content"])
+    else:
+        click.echo(json.dumps(out, indent=2, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------
