@@ -90,6 +90,73 @@ def test_register_cursor_uses_mcp_servers_schema(tmp_path, monkeypatch):
     assert mcp_config.is_registered(spec) is False
 
 
+def test_register_zcode_uses_mcp_servers_nested_schema(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("HIPPOCAMPUS_MCP_CMD", "/opt/fake/bin/hippocampus-mcp")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _reload_clients_modules()
+
+    from hippocampus.clients import mcp_config, registry
+
+    importlib.reload(registry)
+    importlib.reload(mcp_config)
+
+    spec = registry.by_name("zcode")
+    assert spec is not None
+    assert spec.mcp_config_format == "zcode-json"
+    assert spec.rules_path == fake_home / ".zcode" / "AGENTS.md"
+    assert spec.mcp_config_path == fake_home / ".zcode" / "cli" / "config.json"
+
+    # Pre-seed a config with another server + a stale hippocampus entry that
+    # carries user extras (per-tool approval modes) and a wrong client tag.
+    spec.mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
+    spec.mcp_config_path.write_text(
+        json.dumps(
+            {
+                "mcp": {
+                    "servers": {
+                        "existing": {"command": "npx", "args": ["some-mcp"]},
+                        "hippocampus": {
+                            "tools": {"log_progress": {"approval_mode": "approve"}},
+                            "command": "/old/hippocampus-mcp",
+                            "args": [],
+                            "env": {"HIPPOCAMPUS_CLIENT": "codex"},
+                        },
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    changed, _ = mcp_config.register(spec)
+    assert changed is True
+
+    data = json.loads(spec.mcp_config_path.read_text(encoding="utf-8"))
+    assert "existing" in data["mcp"]["servers"]
+    entry = data["mcp"]["servers"]["hippocampus"]
+    assert entry["command"] == "/opt/fake/bin/hippocampus-mcp"
+    assert entry["env"]["HIPPOCAMPUS_CLIENT"] == "zcode"
+    # User extras survive re-register.
+    assert entry["tools"] == {"log_progress": {"approval_mode": "approve"}}
+    assert mcp_config.is_registered(spec) is True
+
+    changed_again, _ = mcp_config.register(spec)
+    assert changed_again is False
+
+    removed, _ = mcp_config.unregister(spec)
+    assert removed is True
+    data_after = json.loads(spec.mcp_config_path.read_text(encoding="utf-8"))
+    assert "hippocampus" not in data_after["mcp"]["servers"]
+    assert "existing" in data_after["mcp"]["servers"]
+
+
 def test_register_opencode_uses_mcp_schema_and_removes_legacy_mcpservers(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir()

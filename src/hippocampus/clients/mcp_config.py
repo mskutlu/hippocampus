@@ -172,6 +172,10 @@ def _server_bucket(data: dict, fmt: str) -> dict[str, Any] | None:
     if fmt == "opencode-json":
         data.setdefault("mcp", {})
         return data["mcp"]
+    if fmt == "zcode-json":
+        data.setdefault("mcp", {})
+        data["mcp"].setdefault("servers", {})
+        return data["mcp"]["servers"]
     if fmt in ("devin-json", "claude-json", "windsurf-mcp", "cursor-mcp-json"):
         data.setdefault("mcpServers", {})
         return data["mcpServers"]
@@ -336,6 +340,9 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
         }
 
     existing = bucket.get(MCP_ENTRY_NAME)
+    if fmt == "zcode-json" and isinstance(existing, dict):
+        # Preserve user-set extras (e.g. per-tool approval_mode) on re-register.
+        new_entry = {**existing, **new_entry}
     if existing == new_entry and not legacy_changed:
         return False, f"{spec.name}: already registered at {path}"
     bucket[MCP_ENTRY_NAME] = new_entry

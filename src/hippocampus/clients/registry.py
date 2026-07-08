@@ -25,7 +25,7 @@ class ClientSpec:
     rules_path: Path                # file receiving the injection block
     creation_header: str            # header used when creating a fresh rules file
     mcp_config_path: Path | None    # where to register the MCP server (optional)
-    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension'
+    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension' | 'zcode-json'
 
     @property
     def exists(self) -> bool:
@@ -150,6 +150,17 @@ CLIENTS: list[ClientSpec] = [
         creation_header="# Pi Agent Global Rules",
         mcp_config_path=HOME / ".pi" / "agent" / "extensions" / "hippocampus",
         mcp_config_format="pi-extension",
+    ),
+    # ZCode (z.ai desktop harness for GLM). Reads ~/.zcode/AGENTS.md as its
+    # user-global instructions on every task start. User-scope MCP servers
+    # live in ~/.zcode/cli/config.json under {"mcp": {"servers": {...}}}.
+    ClientSpec(
+        name="zcode",
+        label="ZCode",
+        rules_path=HOME / ".zcode" / "AGENTS.md",
+        creation_header="# ZCode Global Instructions",
+        mcp_config_path=HOME / ".zcode" / "cli" / "config.json",
+        mcp_config_format="zcode-json",
     ),
 ]
 
