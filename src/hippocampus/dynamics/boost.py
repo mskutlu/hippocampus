@@ -68,7 +68,13 @@ def boost(
     if session_id:
         sessions.log_access(session_id, fragment_id)
 
-    feedback.log(fragment_id, "boost", delta=config.BOOST_DELTA, reason=context_tag)
+    feedback.log(
+        fragment_id,
+        "boost",
+        delta=config.BOOST_DELTA,
+        reason=context_tag,
+        session_id=session_id,
+    )
 
     # v1.6.0 — zombie protection: auto-pin once a fragment has been accessed
     # enough times that decay has clearly proven useless. Pinning halts decay
@@ -77,7 +83,12 @@ def boost(
         threshold = int(config.get_setting("auto_pin_access_threshold") or 0)
         if threshold > 0 and updated.accessed >= threshold:
             updated = frag_store.update_fields(fragment_id, pinned=True) or updated
-            feedback.log(fragment_id, "auto-pin", reason="access-threshold")
+            feedback.log(
+                fragment_id,
+                "auto-pin",
+                reason="access-threshold",
+                session_id=session_id,
+            )
 
     return updated
 
@@ -114,11 +125,22 @@ def boost_many(
                     if nb_id in seen:
                         continue
                     seen.add(nb_id)
-                    _small_boost(nb_id, neighbor_delta, context_tag=f"cluster:{f.id}")
+                    _small_boost(
+                        nb_id,
+                        neighbor_delta,
+                        context_tag=f"cluster:{f.id}",
+                        session_id=session_id,
+                    )
     return updated
 
 
-def _small_boost(fragment_id: str, delta: float, *, context_tag: str | None = None) -> None:
+def _small_boost(
+    fragment_id: str,
+    delta: float,
+    *,
+    context_tag: str | None = None,
+    session_id: str | None = None,
+) -> None:
     """Apply a custom-delta boost (used for cluster propagation, smaller than BOOST_DELTA)."""
     current = frag_store.get(fragment_id)
     if current is None:
@@ -132,12 +154,19 @@ def _small_boost(fragment_id: str, delta: float, *, context_tag: str | None = No
         last_accessed_at=_utc_now(),
         below_threshold_since=None,
     )
-    feedback.log(fragment_id, "boost", delta=delta, reason=context_tag)
+    feedback.log(
+        fragment_id,
+        "boost",
+        delta=delta,
+        reason=context_tag,
+        session_id=session_id,
+    )
 
 
 def apply_negative_feedback(
     fragment_id: str,
     reason: str | None = None,
+    session_id: str | None = None,
 ) -> frag_store.Fragment | None:
     """`forget(id)` — apply -FEEDBACK_DELTA and log it."""
     current = frag_store.get(fragment_id)
@@ -145,5 +174,11 @@ def apply_negative_feedback(
         return None
     new_conf = max(config.CONFIDENCE_MIN, current.confidence - config.FEEDBACK_DELTA)
     updated = frag_store.update_fields(fragment_id, confidence=new_conf)
-    feedback.log(fragment_id, "negative", delta=-config.FEEDBACK_DELTA, reason=reason)
+    feedback.log(
+        fragment_id,
+        "negative",
+        delta=-config.FEEDBACK_DELTA,
+        reason=reason,
+        session_id=session_id,
+    )
     return updated

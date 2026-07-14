@@ -250,7 +250,7 @@ document.querySelectorAll('nav button').forEach(btn => {
 });
 
 function renderFragmentCell(f) {
-  const tags = (f.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
+  const tags = (f.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
   const pin = f.pinned ? '<span class="pinned">📌</span>' : '';
   return { tags, pin };
 }
@@ -340,13 +340,13 @@ async function openFragment(id) {
   const res = await api(`/api/fragments/${id}`);
   const f = res.fragment;
   const assoc = await api(`/api/associations/${id}`);
-  const tags = (f.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
-  const assocRows = assoc.associations.map(a => `<tr><td class="mono">${a.other}</td><td>${a.weight.toFixed(1)}</td><td>${a.co_accessed_count}</td></tr>`).join('') || '<tr><td colspan="3"><em>none</em></td></tr>';
+  const tags = (f.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+  const assocRows = assoc.associations.map(a => `<tr><td class="mono">${escapeHtml(a.other)}</td><td>${a.weight.toFixed(1)}</td><td>${a.co_accessed_count}</td></tr>`).join('') || '<tr><td colspan="3"><em>none</em></td></tr>';
   document.getElementById('drawer-body').innerHTML = `
     <h3>${escapeHtml(f.summary)}</h3>
-    <p class="mono">${f.id}</p>
+    <p class="mono">${escapeHtml(f.id)}</p>
     <p>${tags} ${f.pinned ? '<span class="pinned">📌 pinned</span>' : ''}</p>
-    <div><strong>conf</strong> ${f.confidence.toFixed(3)} · <strong>acc</strong> ${f.accessed} · <strong>last</strong> ${f.last_accessed_at || '—'}</div>
+    <div><strong>conf</strong> ${f.confidence.toFixed(3)} · <strong>acc</strong> ${f.accessed} · <strong>last</strong> ${escapeHtml(f.last_accessed_at || '—')}</div>
     <hr style="margin:12px 0; border-color:var(--border)" />
     <pre style="white-space:pre-wrap">${escapeHtml(f.content)}</pre>
     <hr style="margin:12px 0; border-color:var(--border)" />
@@ -370,7 +370,7 @@ async function loadProgress() {
   const res = await api(`/api/progress?client=${encodeURIComponent(client)}`);
   const out = document.getElementById('wm-out');
   if (!res.session_id) { out.innerHTML = '<em>no active session — first log entry will start one</em>'; return; }
-  out.innerHTML = `<div class="mono">session: ${res.session_id}</div>
+  out.innerHTML = `<div class="mono">session: ${escapeHtml(res.session_id)}</div>
     <table style="margin-top:8px"><thead><tr><th>turn</th><th>kind</th><th>content</th><th>time</th></tr></thead><tbody>${
     res.entries.map(e => `<tr><td>${e.turn_index}</td><td><span class="kind-badge kind-${e.kind}">${e.kind}</span></td><td>${escapeHtml(e.content)}</td><td class="mono">${(e.created_at || '').slice(11,19)}</td></tr>`).join('')
   }</tbody></table>`;
@@ -400,13 +400,16 @@ async function endProgress(distill) {
 
 async function loadFeedback() {
   const res = await api('/api/feedback?limit=100');
-  document.querySelector('#fb-table tbody').innerHTML = res.events.map(e => `<tr>
+  document.querySelector('#fb-table tbody').innerHTML = res.events.map(e => {
+    const badge = e.kind === 'negative' ? 'blocker' : e.kind === 'boost' ? 'ask' : 'note';
+    return `<tr>
     <td class="mono">${(e.created_at || '').slice(11,19)}</td>
-    <td><span class="kind-badge kind-${e.kind === 'negative' ? 'blocker' : e.kind === 'boost' ? 'ask' : 'note'}">${e.kind}</span></td>
+    <td><span class="kind-badge kind-${badge}">${escapeHtml(e.kind)}</span></td>
     <td>${e.delta ?? ''}</td>
-    <td class="mono">${e.fragment_id}</td>
+    <td class="mono">${escapeHtml(e.fragment_id)}</td>
     <td>${escapeHtml(e.reason || '')}</td>
-  </tr>`).join('') || '<tr><td colspan="5"><em>no events</em></td></tr>';
+  </tr>`;
+  }).join('') || '<tr><td colspan="5"><em>no events</em></td></tr>';
 }
 
 async function loadSettings() {
@@ -415,14 +418,14 @@ async function loadSettings() {
   const form = document.getElementById('cfg-form');
   form.innerHTML = Object.entries(cfg.settings).map(([k, v]) => `
     <div class="row" style="margin-bottom:8px">
-      <label style="width:200px">${k}</label>
-      <input type="text" value="${v === null ? '' : v}" data-key="${k}" />
+      <label style="width:200px">${escapeHtml(k)}</label>
+      <input type="text" value="${escapeHtml(v === null ? '' : String(v))}" data-key="${escapeHtml(k)}" />
       <button class="act" onclick="saveSetting('${k}')">Save</button>
     </div>
-  `).join('') + `<div class="mono" style="margin-top:8px">${cfg.path}</div>`;
+  `).join('') + `<div class="mono" style="margin-top:8px">${escapeHtml(cfg.path)}</div>`;
   document.getElementById('emb-stats').innerHTML = `
     <div>Embedded: <strong>${emb.embedded}/${emb.total_fragments}</strong> (${(emb.coverage * 100).toFixed(1)}%)</div>
-    <div>Model: <code>${emb.model || '—'}</code> · dim=${emb.dim || '—'} · provider=${emb.provider_available ? 'available' : '<span class="pinned">unavailable</span>'}</div>
+    <div>Model: <code>${escapeHtml(emb.model || '—')}</code> · dim=${emb.dim || '—'} · provider=${emb.provider_available ? 'available' : '<span class="pinned">unavailable</span>'}</div>
   `;
 }
 async function saveSetting(key) {
@@ -439,7 +442,7 @@ async function reindex(force) {
   loadSettings();
 }
 
-function escapeHtml(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 document.getElementById('host').textContent = location.host;
 getToken().then(loadDashboard).then(() => {

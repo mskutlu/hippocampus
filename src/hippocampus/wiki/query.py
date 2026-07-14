@@ -25,6 +25,13 @@ def query(question: str, *, project: str | None = None, limit: int = 8) -> dict:
     hits = storage.search_pages(p.id, question, limit=limit)
     if not hits:
         hits = storage.list_pages(p.id, limit=limit)
+    source_records = {
+        source.id: source.to_dict()
+        for source in storage.sources_by_ids(
+            p.id,
+            [source_id for page in hits for source_id in page.sources],
+        )
+    }
     return {
         "ok": True,
         "project": p.to_dict(),
@@ -37,6 +44,11 @@ def query(question: str, *, project: str | None = None, limit: int = 8) -> dict:
                 "type": page.page_type,
                 "path": page.path,
                 "sources": page.sources,
+                "source_records": [
+                    source_records[source_id]
+                    for source_id in page.sources
+                    if source_id in source_records
+                ],
                 "snippet": _snippet(page.markdown),
             }
             for page in hits
@@ -50,6 +62,7 @@ def file_answer(
     *,
     project: str | None = None,
     materialize: bool = False,
+    source_ids: list[str] | None = None,
 ) -> dict:
     p, blocked = projects.require_project(project)
     if blocked:
@@ -57,6 +70,16 @@ def file_answer(
     assert p is not None
 
     body = markdown if markdown is not None else sys.stdin.read()
+    requested_sources = list(dict.fromkeys(source_ids or []))
+    valid_sources = storage.sources_by_ids(p.id, requested_sources)
+    valid_source_ids = [source.id for source in valid_sources]
+    missing_sources = [source_id for source_id in requested_sources if source_id not in valid_source_ids]
+    if missing_sources:
+        return {
+            "ok": False,
+            "reason": "unknown_source_ids",
+            "source_ids": missing_sources,
+        }
     page = storage.upsert_page(
         p.id,
         page_type="analysis",
@@ -67,11 +90,12 @@ def file_answer(
             "type": "analysis",
             "project": p.project_key,
             "status": "current",
-            "sources": [],
+            "sources": valid_source_ids,
             "tags": ["analysis"],
             "summary": _snippet(body, 160),
         },
         status="current",
+        source_ids=valid_source_ids,
     )
     storage.append_log(p.id, kind="query-filed", title=title, details=f"Filed analysis `{page.path}`.", page_id=page.id)
     idx = wiki_index.refresh(p)
@@ -89,4 +113,3 @@ def file_answer(
         "materialized": materialize,
         "written_paths": written,
     }
-

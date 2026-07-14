@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Current development version: `1.7.0.dev0`.
+
 ### Added — compaction-safe goal anchoring + per-session handoff documents
 
 Context compaction is the working-memory killer: when a client summarizes a

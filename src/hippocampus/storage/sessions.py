@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sqlite3
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -243,19 +244,27 @@ def _latest_open_session(client: str, session_key: str) -> str | None:
 
 
 def open_session(client: str, session_key: str | None = None) -> str:
-    """Open a new session for a client/context and persist its pointer."""
+    """Open or reuse the active session for a client/context."""
     client = _clean_client(client)
     key = derive_session_key(session_key)
     config.ensure_dirs()
     sid = f"sess_{ULID()}"
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO sessions (id, client, session_key, started_at) VALUES (?, ?, ?, ?)",
-            (sid, client, key, _now()),
-        )
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO sessions (id, client, session_key, started_at) VALUES (?, ?, ?, ?)",
+                (sid, client, key, _now()),
+            )
+    except sqlite3.IntegrityError:
+        active = _latest_open_session(client, key)
+        if active is None:
+            raise
+        sid = active
     pointer = _pointer_path(client, key)
-    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    pointer.parent.chmod(0o700)
     pointer.write_text(sid, encoding="utf-8")
+    pointer.chmod(0o600)
     return sid
 
 
@@ -310,12 +319,14 @@ def current_session_id(
             if sid and _active_session_exists(sid, client_name, key):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(sid, encoding="utf-8")
+                p.chmod(0o600)
                 return sid
 
     latest = _latest_open_session(client_name, key)
     if latest:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(latest, encoding="utf-8")
+        p.chmod(0o600)
         return latest
 
     if open_if_missing:

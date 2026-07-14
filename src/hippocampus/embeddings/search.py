@@ -139,6 +139,7 @@ def stats() -> dict:
     provider = load_provider()
     embedded = vstore.count()
     total = frag_store.count()
+    configured_weight = config.get_setting("semantic_weight")
     return {
         "embedded": embedded,
         "total_fragments": total,
@@ -146,5 +147,5 @@ def stats() -> dict:
         "model": provider.model if provider else None,
         "dim": provider.dim if provider else None,
         "provider_available": provider is not None,
-        "semantic_weight": config.get_setting("semantic_weight") or 0.5,
+        "semantic_weight": 0.5 if configured_weight is None else configured_weight,
     }

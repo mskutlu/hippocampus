@@ -90,3 +90,34 @@ def test_log_progress_returns_demoted_id(hippo_env, monkeypatch):
 
     out = T.log_progress(kind="ask", content="no, that's not how acme-orders works.")
     assert out["demoted_fragment_id"] == fid
+
+
+def test_negation_only_targets_current_session(hippo_env, monkeypatch):
+    from hippocampus.dynamics import boost as boost_dyn
+    from hippocampus.dynamics import negation
+    from hippocampus.storage import fragments as F, sessions
+
+    monkeypatch.setenv("HIPPO_INFERRED_NEGATION_ENABLED", "true")
+
+    first = F.create("First session memory")
+    second = F.create("Second session memory")
+    first_session = sessions.open_session("devin", session_key="first")
+    second_session = sessions.open_session("devin", session_key="second")
+    boost_dyn.boost(
+        first.id,
+        context_tag="recall:first",
+        session_id=first_session,
+    )
+    boost_dyn.boost(
+        second.id,
+        context_tag="recall:second",
+        session_id=second_session,
+    )
+
+    demoted = negation.infer_and_forget(
+        "no, that is wrong",
+        session_id=first_session,
+    )
+
+    assert demoted == first.id
+    assert F.get(first.id).confidence < F.get(second.id).confidence

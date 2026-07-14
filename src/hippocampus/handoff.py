@@ -171,8 +171,12 @@ def write_handoff(
         status=status,
         final_summary=final_summary,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and path.read_text(encoding="utf-8") == body:
-        return path, False
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    if path.exists():
+        path.chmod(0o600)
+        if path.read_text(encoding="utf-8") == body:
+            return path, False
     path.write_text(body, encoding="utf-8")
+    path.chmod(0o600)
     return path, True

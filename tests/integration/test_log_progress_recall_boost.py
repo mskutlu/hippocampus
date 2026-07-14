@@ -4,6 +4,10 @@ from __future__ import annotations
 
 
 def test_log_progress_boosts_semantic_match(hippo_env, monkeypatch):
+    import pytest
+
+    from hippocampus import config
+    from hippocampus.embeddings import search as semantic_search
     from hippocampus.mcp import tools as T
     from hippocampus.storage import fragments as F
 
@@ -11,11 +15,16 @@ def test_log_progress_boosts_semantic_match(hippo_env, monkeypatch):
     monkeypatch.setenv("HIPPO_LOG_PROGRESS_RECALL_BOOST_K", "3")
     monkeypatch.setenv("HIPPO_LOG_PROGRESS_RECALL_MIN_SCORE", "0.30")
 
-    rmem = T.remember(
+    fragment = F.create(
         content="Kafka consumers must be idempotent to handle redelivery.",
         summary="Kafka consumer idempotency",
     )
-    fid = rmem["fragment"]["id"]
+    fid = fragment.id
+    monkeypatch.setattr(
+        semantic_search,
+        "semantic_topk",
+        lambda query, k=5: [(fid, 0.91)],
+    )
     before = F.get(fid).confidence
 
     out = T.log_progress(
@@ -25,12 +34,16 @@ def test_log_progress_boosts_semantic_match(hippo_env, monkeypatch):
     assert out["logged"] is True
 
     after = F.get(fid).confidence
-    assert after > before, "Semantic-match fragment should have been auto-boosted"
+    assert after - before == pytest.approx(config.BOOST_DELTA)
     assert fid in out.get("auto_boosted_fragments", [])
 
 
 def test_log_progress_no_explicit_id_still_boosts(hippo_env, monkeypatch):
     """Even with no `frag_…` reference, semantic match alone should boost."""
+    import pytest
+
+    from hippocampus import config
+    from hippocampus.embeddings import search as semantic_search
     from hippocampus.mcp import tools as T
     from hippocampus.storage import fragments as F
 
@@ -38,13 +51,18 @@ def test_log_progress_no_explicit_id_still_boosts(hippo_env, monkeypatch):
     monkeypatch.setenv("HIPPO_LOG_PROGRESS_RECALL_BOOST_K", "3")
     monkeypatch.setenv("HIPPO_LOG_PROGRESS_RECALL_MIN_SCORE", "0.30")
 
-    rmem = T.remember(content="The acme-orders service deploys via GitLab CI to Docker Hub.")
-    fid = rmem["fragment"]["id"]
+    fragment = F.create(content="The acme-orders service deploys via GitLab CI to Docker Hub.")
+    fid = fragment.id
+    monkeypatch.setattr(
+        semantic_search,
+        "semantic_topk",
+        lambda query, k=5: [(fid, 0.91)],
+    )
     before = F.get(fid).confidence
 
     out = T.log_progress(kind="ask", content="How does acme-orders deploy to Docker Hub?")
     assert fid in out.get("auto_boosted_fragments", [])
-    assert F.get(fid).confidence > before
+    assert F.get(fid).confidence - before == pytest.approx(config.BOOST_DELTA)
 
 
 def test_log_progress_respects_disable(hippo_env, monkeypatch):

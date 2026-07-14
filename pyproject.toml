@@ -1,6 +1,6 @@
 [project]
 name = "hippocampus"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Shared biologically-inspired long-term memory for AI assistants (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,10 +45,21 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/hippocampus"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "hippocampus/migrations"
+"scripts/hooks" = "hippocampus/assets/hooks"
+"scripts/pi-extension" = "hippocampus/assets/pi-extension"
+
+[tool.hatch.version]
+path = "src/hippocampus/__init__.py"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "model_smoke: opt-in test using a real embedding model",
+]
 
 [dependency-groups]
 dev = [

@@ -38,6 +38,7 @@ logging.basicConfig(
         logging.StreamHandler(sys.stderr),
     ],
 )
+config.secure_file(_log_path)
 log = logging.getLogger("hippocampus.mcp")
 
 
@@ -365,6 +366,7 @@ TOOL_SPECS: list[Tool] = [
                 "markdown": {"type": "string"},
                 "project": {"type": "string"},
                 "materialize": {"type": "boolean", "default": False},
+                "source_ids": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["title", "markdown"],
         },

@@ -16,6 +16,7 @@ def test_full_cycle_shield_then_decay_then_archive(hippo_env, monkeypatch):
     from hippocampus.dynamics import archive, decay
     from hippocampus.mcp import tools as T
     from hippocampus.storage import fragments as F, sessions
+    from hippocampus.storage.db import get_ro_conn
 
     monkeypatch.setenv("HIPPO_DECAY_SKIP_RECENT_DAYS", "0")
 
@@ -55,6 +56,12 @@ def test_full_cycle_shield_then_decay_then_archive(hippo_env, monkeypatch):
     result = archive.run_archive_cycle()
     assert result.fragments_archived == 1
     assert F.get(fid) is None
+    with get_ro_conn() as conn:
+        audit = conn.execute(
+            "SELECT kind FROM feedback_log WHERE fragment_id = ?",
+            (fid,),
+        ).fetchall()
+    assert any(row["kind"] == "archive" for row in audit)
 
     # 6. Mirror was moved to archive dir, not deleted.
     archive_path = hippo_env["fragments_dir"] / ".archive" / f"{fid}.md"

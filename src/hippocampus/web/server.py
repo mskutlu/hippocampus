@@ -14,7 +14,7 @@ import logging
 import secrets
 import webbrowser
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:
     from fastapi import Body, FastAPI, HTTPException, Header, Query, Request
@@ -28,13 +28,14 @@ except ImportError as exc:  # noqa: F841
     FASTAPI_AVAILABLE = False
 
 
-from hippocampus import config
+from hippocampus import __version__, config
 from hippocampus.mcp import tools
 from hippocampus.storage import feedback as feedback_store
 
 log = logging.getLogger("hippocampus.web")
 
 CSRF_TOKEN = secrets.token_urlsafe(32)
+MAX_REQUEST_BYTES = 1_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -43,43 +44,43 @@ CSRF_TOKEN = secrets.token_urlsafe(32)
 
 if FASTAPI_AVAILABLE:
     class RememberBody(BaseModel):
-        content: str
-        summary: str | None = None
-        tags: list[str] = Field(default_factory=list)
-        source_type: str = "web"
-        source_ref: str | None = None
+        content: str = Field(min_length=1, max_length=100_000)
+        summary: str | None = Field(default=None, max_length=500)
+        tags: list[str] = Field(default_factory=list, max_length=50)
+        source_type: str = Field(default="web", min_length=1, max_length=100)
+        source_ref: str | None = Field(default=None, max_length=2_000)
         pinned: bool = False
 
     class ForgetBody(BaseModel):
-        reason: str | None = None
+        reason: str | None = Field(default=None, max_length=1_000)
 
     class RecallBody(BaseModel):
-        query: str
-        limit: int = 5
-        min_confidence: float = 0.0
-        context_tag: str | None = None
+        query: str = Field(min_length=1, max_length=10_000)
+        limit: int = Field(default=5, ge=1, le=50)
+        min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+        context_tag: str | None = Field(default=None, max_length=100)
 
     class ProgressLogBody(BaseModel):
-        kind: str
-        content: str
-        details: str | None = None
-        client: str | None = None
+        kind: Literal["ask", "done", "decision", "blocker", "next", "goal", "note"]
+        content: str = Field(min_length=1, max_length=10_000)
+        details: str | None = Field(default=None, max_length=100_000)
+        client: str | None = Field(default=None, max_length=100)
 
     class ProgressEndBody(BaseModel):
-        client: str | None = None
+        client: str | None = Field(default=None, max_length=100)
         distill: bool = False
-        summary: str | None = None
-        tags: list[str] = Field(default_factory=list)
+        summary: str | None = Field(default=None, max_length=10_000)
+        tags: list[str] = Field(default_factory=list, max_length=50)
 
     class ProgressUndoBody(BaseModel):
-        client: str | None = None
+        client: str | None = Field(default=None, max_length=100)
 
     class ReindexBody(BaseModel):
         force: bool = False
-        batch: int = 64
+        batch: int = Field(default=64, ge=1, le=1_000)
 
     class ConfigBody(BaseModel):
-        key: str
+        key: str = Field(min_length=1, max_length=100, pattern=r"^[a-z][a-z0-9_]*$")
         value: Any
 
 
@@ -94,6 +95,17 @@ def _require_token(request: "Request", x_hippo_token: str | None) -> None:
         raise HTTPException(status_code=403, detail="invalid X-Hippo-Token")
 
 
+def _is_loopback_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        from ipaddress import ip_address
+
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def create_app() -> "FastAPI":
     if not FASTAPI_AVAILABLE:
         raise RuntimeError(
@@ -101,17 +113,27 @@ def create_app() -> "FastAPI":
             "Run `uv pip install -e '.[web]'` to enable the web UI."
         )
 
-    app = FastAPI(title="Hippocampus", version=config._DEFAULTS.get("version", "1.2.0"))  # type: ignore[attr-defined]
+    app = FastAPI(title="Hippocampus", version=__version__)
 
     static_dir = Path(__file__).parent / "static"
 
     @app.middleware("http")
     async def auth_and_log(request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_REQUEST_BYTES:
+                    return JSONResponse(status_code=413, content={"detail": "request body too large"})
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "invalid content-length"})
         try:
             _require_token(request, request.headers.get("X-Hippo-Token"))
         except HTTPException as e:
             return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
         response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
         log.info("%s %s -> %s", request.method, request.url.path, response.status_code)
         return response
 
@@ -138,7 +160,7 @@ def create_app() -> "FastAPI":
         return maintenance.health_snapshot(include_duplicates=duplicates)
 
     @app.get("/api/top")
-    def api_top(limit: int | None = None) -> dict:
+    def api_top(limit: int | None = Query(default=None, ge=1, le=100)) -> dict:
         return tools.top_fragments(limit=limit)
 
     # ------------------------------------------------------------------
@@ -147,9 +169,9 @@ def create_app() -> "FastAPI":
 
     @app.get("/api/fragments")
     def api_fragments(
-        tag: str | None = None,
-        min_confidence: float = 0.0,
-        limit: int = 50,
+        tag: str | None = Query(default=None, max_length=100),
+        min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+        limit: int = Query(default=50, ge=1, le=500),
     ) -> dict:
         return tools.list_fragments(tag=tag, min_confidence=min_confidence, limit=limit)
 
@@ -208,7 +230,10 @@ def create_app() -> "FastAPI":
     # ------------------------------------------------------------------
 
     @app.get("/api/progress")
-    def api_progress(client: str | None = None, full: bool = False) -> dict:
+    def api_progress(
+        client: str | None = Query(default=None, max_length=100),
+        full: bool = False,
+    ) -> dict:
         return tools.get_progress(client=client, full=full)
 
     @app.post("/api/progress")
@@ -262,7 +287,9 @@ def create_app() -> "FastAPI":
 
     @app.post("/api/config")
     def api_config_set(body: ConfigBody = Body(...)) -> dict:
-        config.set_setting(body.key.replace("-", "_").lower(), body.value)
+        if body.key not in config._DEFAULTS:
+            raise HTTPException(status_code=422, detail="unknown setting")
+        config.set_setting(body.key, body.value)
         return api_config_get()
 
     # ------------------------------------------------------------------
@@ -270,7 +297,7 @@ def create_app() -> "FastAPI":
     # ------------------------------------------------------------------
 
     @app.get("/api/feedback")
-    def api_feedback(limit: int = 50) -> dict:
+    def api_feedback(limit: int = Query(default=50, ge=1, le=500)) -> dict:
         return {"events": feedback_store.recent(limit=limit)}
 
     @app.get("/api/associations/{fragment_id}")
@@ -310,13 +337,12 @@ def run(
         raise RuntimeError(
             "FastAPI is not installed. Run `uv pip install -e '.[web]'`."
         )
-    # Make sure DB, mirror hooks, and dirs are ready before we take traffic.
+    if not _is_loopback_host(host):
+        raise ValueError("Hippocampus web UI only binds to loopback addresses")
     tools._ensure_bootstrapped()
 
     app = create_app()
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        log.warning("binding to %s — anyone on your network can reach this. Token-guard is defence-in-depth only.", host)
     log.info("serving Hippocampus web UI on http://%s:%d  (token=%s...)", host, port, CSRF_TOKEN[:8])
-    if open_browser and host in ("127.0.0.1", "localhost"):
+    if open_browser:
         webbrowser.open(f"http://{host}:{port}/")
     uvicorn.run(app, host=host, port=port, log_level="info")

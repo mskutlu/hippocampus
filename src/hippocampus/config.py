@@ -96,10 +96,21 @@ def ensure_dirs() -> None:
         LOG_DIR,
         BACKUPS_DIR,
         SESSION_POINTER_DIR,
+    ):
+        p.mkdir(parents=True, exist_ok=True, mode=0o700)
+        p.chmod(0o700)
+    for p in (
         FRAGMENTS_DIR,
         FRAGMENTS_ARCHIVE_DIR,
     ):
         p.mkdir(parents=True, exist_ok=True)
+    for p in (DB_PATH, _CONFIG_FILE, INJECTION_FILE, EVENTS_LOG):
+        secure_file(p)
+
+
+def secure_file(path: Path) -> None:
+    if path.exists():
+        path.chmod(0o600)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +125,7 @@ _DEFAULTS: dict[str, Any] = {
     "embedding_provider": "fastembed",    # fastembed | sentence-transformers
     "embedding_model": "BAAI/bge-small-en-v1.5",
     "embedding_truncate_dim": None,       # Matryoshka truncation (int) or None
-    "embedding_trust_remote_code": True,  # needed for stella / gte-Qwen2 / etc
+    "embedding_trust_remote_code": False,
     "semantic_weight": 0.5,                # 0.0 = FTS only, 1.0 = semantic only
     # V8 — compaction-safe context re-injection via lifecycle hooks
     "hook_inject_working": True,           # UserPromptSubmit / SessionStart / PostCompaction
@@ -145,6 +156,9 @@ _DEFAULTS: dict[str, Any] = {
     "wiki_materialize_default": False,
     "wiki_query_limit": 8,
     "wiki_lint_strict": False,
+    "backup_retention_count": 14,
+    "transcript_capture_enabled": False,
+    "transcript_retention_days": 30,
 }
 
 
@@ -187,6 +201,7 @@ def set_setting(key: str, value: Any) -> None:
     data = _load_file_config()
     data[key] = value
     _CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    secure_file(_CONFIG_FILE)
 
 
 def all_settings() -> dict[str, Any]:

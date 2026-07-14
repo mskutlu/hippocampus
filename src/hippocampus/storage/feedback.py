@@ -5,7 +5,13 @@ from __future__ import annotations
 from hippocampus.storage.db import get_conn, get_ro_conn
 
 
-def log(fragment_id: str, kind: str, delta: float | None = None, reason: str | None = None) -> None:
+def log(
+    fragment_id: str,
+    kind: str,
+    delta: float | None = None,
+    reason: str | None = None,
+    session_id: str | None = None,
+) -> None:
     """Write one event to the feedback log.
 
     kind ∈ {'boost', 'decay', 'negative', 'pin', 'unpin', 'archive'}
@@ -14,10 +20,10 @@ def log(fragment_id: str, kind: str, delta: float | None = None, reason: str | N
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO feedback_log (fragment_id, kind, delta, reason)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO feedback_log (fragment_id, session_id, kind, delta, reason)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (fragment_id, kind, delta, reason),
+            (fragment_id, session_id, kind, delta, reason),
         )
 
 
