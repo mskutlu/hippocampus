@@ -130,7 +130,7 @@ hippo wiki init --project hippocampus --materialize
 hippo wiki ingest raw/inbox/article.md --project hippocampus --dry-run
 hippo wiki ingest raw/inbox/article.md --project hippocampus --materialize
 hippo wiki query "what does the wiki say about memory?" --project hippocampus
-hippo wiki file-answer "Memory Summary" --project hippocampus --stdin
+hippo wiki file-answer "Memory Summary" --project hippocampus --stdin --source-id wsrc_01H...
 hippo wiki lint --project hippocampus
 hippo wiki export --project hippocampus
 ```
@@ -141,6 +141,8 @@ ad hoc `index.md` or `log.md` files while continuing the operation. Run
 
 SQLite is canonical for wiki pages, sources, index, and log. Use
 `hippo wiki export` to regenerate markdown files when the exported view drifts.
+Queries use SQLite FTS and return each page's source IDs plus source records,
+including the original `source_ref`.
 
 ## Daemon control
 
@@ -170,18 +172,19 @@ Everything state-ful lives in two places:
 - `~/.hippocampus/hippocampus.db` (canonical)
 - `~/hippocampus-vault/Fragments/*.md` (human-readable mirror)
 
-Back both up — they are consistent on their own but the mirror is the
-friendlier recovery source if SQLite is ever corrupted.
+Back both up. The CLI uses SQLite's online backup API, verifies integrity, and
+retains the newest 14 snapshots by default.
 
 ```bash
-# Quick snapshot
-cp ~/.hippocampus/hippocampus.db ~/.hippocampus/backups/manual-$(date +%Y%m%d).db
+hippo backup
+hippo backup --retention 30
 
-# Restore from a snapshot
-bash scripts/uninstall.sh
-cp ~/.hippocampus/backups/manual-20260101.db ~/.hippocampus/hippocampus.db
-bash scripts/install.sh
+hippo restore ~/.hippocampus/backups/hippocampus-20260101T120000000000Z.db
 ```
+
+Restore first creates a verified `pre-restore` safety snapshot. Migrations do
+the same with a `pre-migration` snapshot and restore it automatically if an
+upgrade fails.
 
 If the mirror and DB disagree, trust the DB — regenerate the mirror:
 

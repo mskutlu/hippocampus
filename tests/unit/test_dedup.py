@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_dedup_finds_near_duplicates(hippo_env, monkeypatch):
-    from hippocampus.embeddings import dedup
+    from hippocampus.embeddings import dedup, store
     from hippocampus.mcp import tools as T
 
     monkeypatch.setenv("HIPPO_DEDUP_COSINE_THRESHOLD", "0.90")
@@ -16,6 +16,9 @@ def test_dedup_finds_near_duplicates(hippo_env, monkeypatch):
     # A clearly-different fragment
     c = T.remember(content="The acme-orders service deploys via GitLab CI to Docker Hub.",
                    summary="acme-orders deploy")
+    store.put(a["fragment"]["id"], [1.0, 0.0], model="stub")
+    store.put(b["fragment"]["id"], [0.99, 0.01], model="stub")
+    store.put(c["fragment"]["id"], [0.0, 1.0], model="stub")
 
     pairs = dedup.find_duplicates(threshold=0.90)
     pair_ids = {frozenset((p.keeper, p.loser)) for p in pairs}
@@ -26,13 +29,16 @@ def test_dedup_finds_near_duplicates(hippo_env, monkeypatch):
 
 
 def test_dedup_returns_empty_when_corpus_unique(hippo_env, monkeypatch):
-    from hippocampus.embeddings import dedup
+    from hippocampus.embeddings import dedup, store
     from hippocampus.mcp import tools as T
 
     monkeypatch.setenv("HIPPO_DEDUP_COSINE_THRESHOLD", "0.99")
-    T.remember(content="Kafka consumers must be idempotent.")
-    T.remember(content="The sky is blue.")
-    T.remember(content="Compile-time errors are surfaced by typecheck.")
+    first = T.remember(content="Kafka consumers must be idempotent.")
+    second = T.remember(content="The sky is blue.")
+    third = T.remember(content="Compile-time errors are surfaced by typecheck.")
+    store.put(first["fragment"]["id"], [1.0, 0.0, 0.0], model="stub")
+    store.put(second["fragment"]["id"], [0.0, 1.0, 0.0], model="stub")
+    store.put(third["fragment"]["id"], [0.0, 0.0, 1.0], model="stub")
 
     assert dedup.find_duplicates(threshold=0.99) == []
 

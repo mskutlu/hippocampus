@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from hippocampus import config
 from hippocampus.storage.db import get_conn, get_ro_conn
 
 VALID_ROLES: frozenset[str] = frozenset(
@@ -115,6 +116,12 @@ def log_entry(
 
     metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True) if metadata else None
     with get_conn() as conn:
+        retention_days = int(config.get_setting("transcript_retention_days") or 0)
+        if retention_days > 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
+            conn.execute("DELETE FROM session_transcript WHERE created_at < ?", (cutoff,))
         if dedup_seconds > 0 and _recent_duplicate(
             conn, session_id, role, cleaned, window_seconds=dedup_seconds
         ):
@@ -158,3 +165,35 @@ def entries_by_client(client: str, session_key: str | None = None, limit: int = 
     with get_ro_conn() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_entry(r) for r in rows]
+
+
+def all_entries(client: str | None = None) -> list[TranscriptEntry]:
+    query = "SELECT * FROM session_transcript"
+    params: list[Any] = []
+    if client:
+        query += " WHERE client = ?"
+        params.append(client)
+    query += " ORDER BY created_at ASC"
+    with get_ro_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def purge(*, client: str | None = None, older_than_days: int | None = None) -> int:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if client:
+        clauses.append("client = ?")
+        params.append(client)
+    if older_than_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
+        clauses.append("created_at < ?")
+        params.append(cutoff)
+    query = "DELETE FROM session_transcript"
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    with get_conn() as conn:
+        cursor = conn.execute(query, params)
+    return cursor.rowcount

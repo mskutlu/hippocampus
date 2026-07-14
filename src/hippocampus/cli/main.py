@@ -210,7 +210,7 @@ def session_start(client: str, session_key: Optional[str], force_new: bool) -> N
     from hippocampus.storage import sessions
 
     sid = (
-        sessions.open_session(client, session_key=session_key)
+        sessions.rotate(client, session_key=session_key)
         if force_new
         else sessions.ensure_session(client, session_key=session_key)
     )
@@ -415,6 +415,28 @@ def archive(dry_run: bool) -> None:
     click.echo(json.dumps(result.as_dict(), indent=2))
 
 
+@cli.command("backup")
+@click.option("--retention", type=click.IntRange(min=1), default=None)
+def backup_cmd(retention: Optional[int]) -> None:
+    """Create and verify a consistent SQLite backup."""
+    _bootstrap()
+    from hippocampus.storage import backup
+
+    click.echo(json.dumps(backup.create(retention=retention), indent=2))
+
+
+@cli.command("restore")
+@click.argument("backup_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def restore_cmd(backup_path: Path) -> None:
+    """Restore a verified SQLite backup."""
+    config.ensure_dirs()
+    from hippocampus.storage import backup, db
+
+    result = backup.restore(backup_path)
+    db.init_db()
+    click.echo(json.dumps(result, indent=2))
+
+
 @cli.command()
 @click.option("--limit", default=None, type=int, help=f"top-N (default: {config.TOP_N_DEFAULT})")
 @click.option("--only", multiple=True, help="Only inject into these clients (repeatable)")
@@ -439,6 +461,7 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool) -> None:
     if not dry_run:
         config.INJECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
         config.INJECTION_FILE.write_text(long_block, encoding="utf-8")
+        config.secure_file(config.INJECTION_FILE)
     click.echo(f"canonical: {config.INJECTION_FILE} ({len(frags)} fragments)")
 
     targets = [c for c in CLIENTS if not only or c.name in only]
@@ -671,6 +694,44 @@ def transcript_show(client: Optional[str], limit: int) -> None:
 
     out = tools.get_transcript(client=client, limit=limit)
     click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@transcript.command("export")
+@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--client", "client_name", default=None)
+def transcript_export(path: Path, client_name: Optional[str]) -> None:
+    """Export transcript rows as JSON Lines."""
+    _bootstrap()
+    from hippocampus.storage import transcript as transcript_store
+
+    entries = transcript_store.all_entries(client=client_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n" for entry in entries)
+    path.write_text(payload, encoding="utf-8")
+    path.chmod(0o600)
+    click.echo(json.dumps({"path": str(path), "count": len(entries)}, indent=2))
+
+
+@transcript.command("purge")
+@click.option("--client", "client_name", default=None)
+@click.option("--older-than-days", type=click.IntRange(min=0), default=None)
+@click.option("--all", "purge_all", is_flag=True)
+def transcript_purge(
+    client_name: Optional[str],
+    older_than_days: Optional[int],
+    purge_all: bool,
+) -> None:
+    """Delete transcript rows by age or explicitly all."""
+    _bootstrap()
+    from hippocampus.storage import transcript as transcript_store
+
+    if not purge_all and older_than_days is None:
+        older_than_days = int(config.get_setting("transcript_retention_days") or 30)
+    deleted = transcript_store.purge(
+        client=client_name,
+        older_than_days=None if purge_all else older_than_days,
+    )
+    click.echo(json.dumps({"deleted": deleted}, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -945,6 +1006,7 @@ def observe_cmd(source: Optional[str], dry_run: bool) -> None:
 
     if not dry_run:
         offset_path.write_text(str(new_offset), encoding="utf-8")
+        config.secure_file(offset_path)
 
     click.echo(json.dumps({
         "source": str(src),
@@ -1043,13 +1105,27 @@ def wiki_query_cmd(question: str, project: Optional[str], limit: Optional[int]) 
 @click.option("--stdin", "read_stdin", is_flag=True, help="Read answer markdown from stdin")
 @click.option("--content", "-c", default=None, help="Answer markdown")
 @click.option("--materialize", is_flag=True)
-def wiki_file_answer_cmd(title: str, project: Optional[str], read_stdin: bool, content: Optional[str], materialize: bool) -> None:
+@click.option("--source-id", "source_ids", multiple=True)
+def wiki_file_answer_cmd(
+    title: str,
+    project: Optional[str],
+    read_stdin: bool,
+    content: Optional[str],
+    materialize: bool,
+    source_ids: tuple[str, ...],
+) -> None:
     _bootstrap()
     if read_stdin or content is None:
         content = sys.stdin.read()
     from hippocampus.mcp import tools
 
-    out = tools.wiki_file_answer(title=title, markdown=content or "", project=project, materialize=materialize)
+    out = tools.wiki_file_answer(
+        title=title,
+        markdown=content or "",
+        project=project,
+        materialize=materialize,
+        source_ids=source_ids,
+    )
     click.echo(json.dumps(out, indent=2, ensure_ascii=False))
 
 
@@ -1132,7 +1208,10 @@ def web_cmd(host: str, port: int, no_browser: bool) -> None:
         from hippocampus.web.server import run
     except RuntimeError as e:
         raise click.ClickException(str(e))
-    run(host=host, port=port, open_browser=not no_browser)
+    try:
+        run(host=host, port=port, open_browser=not no_browser)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

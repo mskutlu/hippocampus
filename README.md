@@ -58,14 +58,20 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 
 ### Transcript history — `log_transcript` / `get_transcript`
 
-- **Raw prompts** captured by lifecycle hooks before the prompt is truncated
-  into a one-line working-memory ask.
+- **Opt-in capture** — transcript storage is disabled by default. Enable it with
+  `hippo config set transcript_capture_enabled true` before lifecycle hooks or
+  explicit `log_transcript` calls retain raw content.
+- **Raw prompts** can then be captured by lifecycle hooks before the prompt is
+  truncated into a one-line working-memory ask.
 - **Visible assistant responses** can be stored when the client or AI calls
   `log_transcript(role="assistant", ...)`.
 - **Reasoning summaries only** — hidden chain-of-thought is not stored; use
   `role="reasoning_summary"` for a concise visible summary of decisions.
 - **Not injected by default** — transcript history is audit/provenance data,
   while fragments stay synthesized long-term memory.
+- **Bounded retention** — the default is 30 days. Use
+  `hippo transcript export` and `hippo transcript purge` for data access and
+  deletion.
 
 ### LLM Wiki — `hippo wiki` / `wiki_*`
 
@@ -76,7 +82,7 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Markdown materialization** — exported `.md` files are generated views for
   Obsidian/git; the database remains canonical.
 - **Source-backed pages** — ingested markdown/text sources create source pages,
-  index/log entries, and queryable wiki context.
+  index/log entries, FTS-backed queryable context, and durable source IDs/refs.
 
 ---
 
@@ -377,16 +383,19 @@ hippo handoff --client devin
 hippo handoff --path-only
 
 # Transcript history
+hippo config set transcript_capture_enabled true
 hippo transcript log user --stdin < prompt.txt
 hippo transcript log assistant "Visible answer text"
 hippo transcript show --client devin
+hippo transcript export transcript.jsonl --client devin
+hippo transcript purge --older-than-days 30
 
 # LLM Wiki (DB-backed, markdown export optional)
 hippo wiki status --project hippocampus
 hippo wiki init --project hippocampus --materialize
 hippo wiki ingest raw/inbox/article.md --project hippocampus --materialize
 hippo wiki query "what do we know about durable memory?" --project hippocampus
-hippo wiki file-answer "Durable Memory Summary" --project hippocampus --stdin
+hippo wiki file-answer "Durable Memory Summary" --project hippocampus --stdin --source-id wsrc_01H...
 hippo wiki lint --project hippocampus
 hippo wiki export --project hippocampus
 
@@ -398,6 +407,8 @@ hippo decay --dry-run
 hippo archive --dry-run
 hippo cleanup-sessions --dry-run
 hippo reconcile-mirror --dry-run
+hippo backup
+hippo restore ~/.hippocampus/backups/hippocampus-20260101T120000000000Z.db
 hippo inject --commit
 ```
 

@@ -195,6 +195,9 @@ def _remove_legacy_opencode_mcpservers(data: dict[str, Any]) -> bool:
 
 def _pi_extension_template_dir() -> Path:
     """Path to the source extension directory bundled in the repo."""
+    packaged = Path(__file__).resolve().parents[1] / "assets" / "pi-extension"
+    if packaged.exists():
+        return packaged
     return Path(__file__).resolve().parents[3] / "scripts" / "pi-extension"
 
 

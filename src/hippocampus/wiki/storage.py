@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -176,11 +177,18 @@ def upsert_page(
                 (page_id, project_id, page_type, title, norm, resolved_path, markdown,
                  _json(frontmatter), status, now, now),
             )
-        conn.execute("DELETE FROM wiki_page_sources WHERE page_id = ?", (page_id,))
         for sid in source_ids:
             conn.execute(
                 "INSERT OR IGNORE INTO wiki_page_sources(page_id, source_id) VALUES (?, ?)",
                 (page_id, sid),
+            )
+        resolved_sources = _page_sources(conn, page_id)
+        resolved_frontmatter = dict(frontmatter or {})
+        if resolved_sources or "sources" in resolved_frontmatter:
+            resolved_frontmatter["sources"] = resolved_sources
+            conn.execute(
+                "UPDATE wiki_pages SET frontmatter_json = ? WHERE id = ?",
+                (_json(resolved_frontmatter), page_id),
             )
         replace_links(conn, page_id, extract_wikilinks(markdown))
         conn.execute("UPDATE wiki_projects SET updated_at = ? WHERE id = ?", (now, project_id))
@@ -272,6 +280,20 @@ def list_sources(project_id: str, limit: int = 1000) -> list[WikiSource]:
     return [_row_source(r) for r in rows]
 
 
+def sources_by_ids(project_id: str, source_ids: Iterable[str]) -> list[WikiSource]:
+    ids = list(dict.fromkeys(source_ids))
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    with get_ro_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM wiki_sources WHERE project_id = ? AND id IN ({placeholders})",
+            [project_id, *ids],
+        ).fetchall()
+    by_id = {row["id"]: _row_source(row) for row in rows}
+    return [by_id[source_id] for source_id in ids if source_id in by_id]
+
+
 def append_log(
     project_id: str,
     *,
@@ -326,19 +348,22 @@ def replace_links(conn, page_id: str, links: list[tuple[str, str | None]]) -> No
 
 
 def search_pages(project_id: str, query: str, limit: int = 10) -> list[WikiPage]:
-    pattern = f"%{query.strip()}%" if query.strip() else "%"
+    tokens = re.findall(r"[^\W_]+", query, flags=re.UNICODE)
+    if not tokens:
+        return list_pages(project_id, limit=limit)
+    fts_query = " OR ".join(f'"{token}"' for token in tokens)
     with get_ro_conn() as conn:
         rows = conn.execute(
             """
-            SELECT * FROM wiki_pages
-            WHERE project_id = ?
-              AND page_type NOT IN ('index', 'log', 'schema')
-              AND (title LIKE ? OR markdown LIKE ? OR path LIKE ?)
-            ORDER BY
-              CASE WHEN title LIKE ? THEN 0 ELSE 1 END,
-              updated_at DESC
+            SELECT p.*
+            FROM wiki_pages_fts
+            JOIN wiki_pages p ON p.rowid = wiki_pages_fts.rowid
+            WHERE wiki_pages_fts MATCH ?
+              AND p.project_id = ?
+              AND p.page_type NOT IN ('index', 'log', 'schema')
+            ORDER BY bm25(wiki_pages_fts, 8.0, 1.0, 3.0), p.updated_at DESC
             LIMIT ?
             """,
-            (project_id, pattern, pattern, pattern, pattern, limit),
+            (fts_query, project_id, limit),
         ).fetchall()
         return [_row_page(r, conn) for r in rows]

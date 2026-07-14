@@ -41,6 +41,9 @@ def _hippo_bin() -> str:
 
 
 def _repo_template(name: str) -> Path:
+    packaged = Path(__file__).resolve().parents[1] / "assets" / "hooks" / f"{name}.sh.template"
+    if packaged.exists():
+        return packaged
     return Path(__file__).resolve().parents[3] / "scripts" / "hooks" / f"{name}.sh.template"
 
 

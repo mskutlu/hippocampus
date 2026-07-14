@@ -49,10 +49,11 @@ def health_snapshot(*, include_duplicates: bool = False) -> dict[str, Any]:
             SELECT
               COUNT(*) AS total,
               SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) AS open,
-              SUM(CASE WHEN l.session_id IS NULL AND a.session_id IS NULL THEN 1 ELSE 0 END) AS no_activity
+              SUM(CASE WHEN l.session_id IS NULL AND a.session_id IS NULL AND t.session_id IS NULL THEN 1 ELSE 0 END) AS no_activity
             FROM sessions s
             LEFT JOIN (SELECT DISTINCT session_id FROM session_ledger) l ON l.session_id = s.id
             LEFT JOIN (SELECT DISTINCT session_id FROM session_accesses) a ON a.session_id = s.id
+            LEFT JOIN (SELECT DISTINCT session_id FROM session_transcript) t ON t.session_id = s.id
             """
         ).fetchone()
         tags = conn.execute(
@@ -138,9 +139,11 @@ def cleanup_sessions(*, dry_run: bool = True) -> dict[str, Any]:
             FROM sessions s
             LEFT JOIN (SELECT DISTINCT session_id FROM session_ledger) l ON l.session_id = s.id
             LEFT JOIN (SELECT DISTINCT session_id FROM session_accesses) a ON a.session_id = s.id
+            LEFT JOIN (SELECT DISTINCT session_id FROM session_transcript) t ON t.session_id = s.id
             WHERE s.ended_at IS NULL
               AND l.session_id IS NULL
               AND a.session_id IS NULL
+              AND t.session_id IS NULL
             """
         ).fetchall()
         empty_ended = conn.execute(
@@ -149,9 +152,11 @@ def cleanup_sessions(*, dry_run: bool = True) -> dict[str, Any]:
             FROM sessions s
             LEFT JOIN (SELECT DISTINCT session_id FROM session_ledger) l ON l.session_id = s.id
             LEFT JOIN (SELECT DISTINCT session_id FROM session_accesses) a ON a.session_id = s.id
+            LEFT JOIN (SELECT DISTINCT session_id FROM session_transcript) t ON t.session_id = s.id
             WHERE s.ended_at IS NOT NULL
               AND l.session_id IS NULL
               AND a.session_id IS NULL
+              AND t.session_id IS NULL
             """
         ).fetchall()
         duplicate_open = conn.execute(

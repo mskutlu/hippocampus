@@ -47,25 +47,21 @@ def looks_like_negation(prompt: str) -> bool:
 def recently_boosted_fragment(session_id: str, *, max_turns: int) -> Optional[str]:
     """Find the most recent fragment boosted via log_progress / recall in this session.
 
-    The window is the *broader* of:
-      - this session's `started_at`
-      - the timestamp of the (max_turns)-th-most-recent ledger entry
-
-    This makes sure we still catch a boost that happened before any ledger
-    entry was logged (e.g. a `recall` call kicked off the session implicitly).
     Only boost rows whose `reason` starts with `log_progress`, `recall`, or
     `cluster:` count — these are the kinds the user would want to take back.
     """
     from hippocampus.storage.db import get_ro_conn
 
     with get_ro_conn() as conn:
-        # Session start — the natural lower bound for "this session's boosts".
         sess_row = conn.execute(
             "SELECT started_at FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()
         session_start = sess_row["started_at"] if sess_row else None
 
-        # Last N ledger entries — gives a tighter window when the session is long.
+        ledger_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM session_ledger WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()["count"]
         cutoff_row = conn.execute(
             """
             SELECT MIN(created_at) AS cutoff FROM (
@@ -78,17 +74,15 @@ def recently_boosted_fragment(session_id: str, *, max_turns: int) -> Optional[st
         ).fetchone()
         ledger_cutoff = cutoff_row["cutoff"] if cutoff_row and cutoff_row["cutoff"] else None
 
-        # Use the EARLIER bound so we don't miss boosts that happened before
-        # the ledger was first written.
-        candidates = [c for c in (session_start, ledger_cutoff) if c]
-        if not candidates:
+        cutoff = ledger_cutoff if ledger_count > max_turns else session_start
+        if not cutoff:
             return None
-        cutoff = min(candidates)
 
         row = conn.execute(
             """
             SELECT fragment_id FROM feedback_log
             WHERE kind = 'boost'
+              AND session_id = ?
               AND created_at >= ?
               AND (
                 reason LIKE 'log_progress%'
@@ -98,7 +92,7 @@ def recently_boosted_fragment(session_id: str, *, max_turns: int) -> Optional[st
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            (cutoff,),
+            (session_id, cutoff),
         ).fetchone()
     return row["fragment_id"] if row else None
 
@@ -114,5 +108,9 @@ def infer_and_forget(prompt: str, *, session_id: str) -> Optional[str]:
     if not target:
         return None
     from hippocampus.dynamics import boost as boost_dyn
-    boost_dyn.apply_negative_feedback(target, reason="user_negation_inferred")
+    boost_dyn.apply_negative_feedback(
+        target,
+        reason="user_negation_inferred",
+        session_id=session_id,
+    )
     return target

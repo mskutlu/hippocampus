@@ -107,3 +107,39 @@ def test_config_and_settings(web_client):
 
     r = client.post("/api/config", json={"key": "working_block_mode", "value": "shared"}, headers=_hdr(token))
     assert r.json()["settings"]["working_block_mode"] == "shared"
+
+
+def test_request_validation_and_size_limits(web_client):
+    client, token = web_client
+
+    empty = client.post("/api/fragments", json={"content": ""}, headers=_hdr(token))
+    oversized_limit = client.post(
+        "/api/recall",
+        json={"query": "valid", "limit": 500},
+        headers=_hdr(token),
+    )
+    unknown_setting = client.post(
+        "/api/config",
+        json={"key": "not_a_setting", "value": "x"},
+        headers=_hdr(token),
+    )
+    oversized_body = client.post(
+        "/api/fragments",
+        content=b"{}",
+        headers={**_hdr(token), "Content-Length": "1000001"},
+    )
+
+    assert empty.status_code == 422
+    assert oversized_limit.status_code == 422
+    assert unknown_setting.status_code == 422
+    assert oversized_body.status_code == 413
+
+
+def test_web_host_must_be_loopback(hippo_env):
+    from hippocampus.web.server import _is_loopback_host
+
+    assert _is_loopback_host("127.0.0.1")
+    assert _is_loopback_host("::1")
+    assert _is_loopback_host("localhost")
+    assert not _is_loopback_host("0.0.0.0")
+    assert not _is_loopback_host("192.168.1.10")

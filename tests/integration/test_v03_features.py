@@ -169,7 +169,7 @@ def test_auto_end_noop_when_disabled(hippo_env, monkeypatch):
     assert out["reason"] == "disabled"
 
 
-def test_auto_end_rotates_idle_sessions(hippo_env, monkeypatch):
+def test_auto_end_closes_idle_sessions_until_next_use(hippo_env, monkeypatch):
     from hippocampus import config
     from hippocampus.mcp import tools
     from hippocampus.storage import sessions as sessions_store
@@ -189,6 +189,8 @@ def test_auto_end_rotates_idle_sessions(hippo_env, monkeypatch):
     assert out["ended"] == 1
     assert out["sessions"][0]["session_id"] == before_sid
 
-    # A new session pointer was installed
-    after_sid = sessions_store.current_session_id("devin", open_if_missing=False)
+    with pytest.raises(RuntimeError):
+        sessions_store.current_session_id("devin", open_if_missing=False)
+
+    after_sid = sessions_store.ensure_session("devin")
     assert after_sid != before_sid

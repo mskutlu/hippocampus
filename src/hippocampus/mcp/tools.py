@@ -143,7 +143,8 @@ def recall(
         }
 
     # --- Fuse (weighted RRF) --------------------------------------------------
-    w_sem = float(config.get_setting("semantic_weight") or 0.5)
+    configured_weight = config.get_setting("semantic_weight")
+    w_sem = float(0.5 if configured_weight is None else configured_weight)
     if not semantic_available:
         w_sem = 0.0
     if not fts_ranks:
@@ -447,6 +448,8 @@ def _log_progress_transcript(
     content: str,
     details: str | None,
 ) -> None:
+    if not bool(config.get_setting("transcript_capture_enabled")):
+        return
     if kind == "ask" and os.environ.get("HIPPOCAMPUS_TRANSCRIPT_PROMPT_LOGGED"):
         return
     role = "user" if kind == "ask" else ("reasoning_summary" if kind == "decision" else "assistant_summary")
@@ -539,17 +542,17 @@ def log_progress(
         k = int(config.get_setting("log_progress_recall_boost_k") or 0)
         min_score = float(config.get_setting("log_progress_recall_min_score") or 0.0)
         if k > 0 and haystack.strip():
-            search_res = recall(query=haystack, limit=k * 2, context_tag=None)
-            hits = (search_res or {}).get("fragments") or []
+            from hippocampus.embeddings import search as semantic_search
+
+            hits = semantic_search.semantic_topk(haystack, k=max(k * 4, k))
             keepers: list[str] = []
-            for h in hits:
-                scores = h.get("scores") or {}
-                sem = float(scores.get("semantic") or 0.0)
+            for fragment_id, score in hits:
+                sem = float(score)
                 if sem < min_score:
                     continue
-                if h["id"] in referenced_ids:
-                    continue  # already boosted by explicit-id path
-                keepers.append(h["id"])
+                if fragment_id in referenced_ids or frag_store.get(fragment_id) is None:
+                    continue
+                keepers.append(fragment_id)
                 if len(keepers) >= k:
                     break
             if keepers:
@@ -741,6 +744,8 @@ def log_transcript(
     reasoning summary instead.
     """
     _ensure_bootstrapped()
+    if not bool(config.get_setting("transcript_capture_enabled")):
+        return {"logged": False, "reason": "transcript_capture_disabled"}
     client_name = _client_name(client)
     session_id, session_key = _current_context(client_name)
     entry = transcript_store.log_entry(
@@ -876,7 +881,6 @@ def auto_end_idle_sessions() -> dict[str, Any]:
 
         _write_session_handoff(sid, client, entries, status="auto-closed")
         sessions.close_session(sid)
-        sessions.open_session(client, session_key=session_key)
         _refresh_working_block(client, session_key=session_key)
         ended.append({
             "session_id": sid,
@@ -982,11 +986,18 @@ def wiki_file_answer(
     markdown: str,
     project: str | None = None,
     materialize: bool = False,
+    source_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     _ensure_bootstrapped()
     from hippocampus.wiki import query as wiki_query_mod
 
-    return wiki_query_mod.file_answer(title, markdown, project=project, materialize=materialize)
+    return wiki_query_mod.file_answer(
+        title,
+        markdown,
+        project=project,
+        materialize=materialize,
+        source_ids=list(source_ids or []),
+    )
 
 
 def wiki_index(project: str | None = None) -> dict[str, Any]:

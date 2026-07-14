@@ -24,12 +24,15 @@ def test_load_provider_respects_env(hippo_env, monkeypatch):
 def test_load_provider_falls_back_gracefully(hippo_env, monkeypatch):
     """If sentence-transformers isn't installed we should warn, not crash."""
     from hippocampus import embeddings
+    from hippocampus.embeddings import st_provider
+
+    def fail_to_load(*args, **kwargs):
+        raise RuntimeError("model unavailable")
 
     embeddings.reset_provider()
+    monkeypatch.setattr(st_provider.StProvider, "__init__", fail_to_load)
     monkeypatch.setenv("HIPPO_EMBEDDING_PROVIDER", "sentence-transformers")
     monkeypatch.setenv("HIPPO_EMBEDDING_MODEL", "this/model-does-not-exist")
-    # Sentence-transformers IS installed in this env, but the model name is
-    # bogus — provider load should return None (handled via except Exception).
     p = embeddings.load_provider()
     assert p is None
 

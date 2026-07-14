@@ -14,7 +14,12 @@ from typing import Iterator
 
 from hippocampus import config
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
+_PACKAGE_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
+MIGRATIONS_DIR = (
+    _PACKAGE_MIGRATIONS_DIR
+    if _PACKAGE_MIGRATIONS_DIR.exists()
+    else Path(__file__).resolve().parents[3] / "migrations"
+)
 
 
 def _apply_pragmas(conn: sqlite3.Connection) -> None:
@@ -33,6 +38,7 @@ def get_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
     path = Path(db_path or config.DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, isolation_level=None, timeout=5.0)
+    config.secure_file(path)
     conn.row_factory = sqlite3.Row
     _apply_pragmas(conn)
     try:
@@ -44,6 +50,9 @@ def get_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
         raise
     finally:
         conn.close()
+        config.secure_file(path)
+        config.secure_file(Path(f"{path}-wal"))
+        config.secure_file(Path(f"{path}-shm"))
 
 
 @contextmanager
@@ -51,12 +60,16 @@ def get_ro_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
     """Read-only connection: no BEGIN/COMMIT overhead, no transaction."""
     path = Path(db_path or config.DB_PATH)
     conn = sqlite3.connect(path, timeout=5.0)
+    config.secure_file(path)
     conn.row_factory = sqlite3.Row
     _apply_pragmas(conn)
     try:
         yield conn
     finally:
         conn.close()
+        config.secure_file(path)
+        config.secure_file(Path(f"{path}-wal"))
+        config.secure_file(Path(f"{path}-shm"))
 
 
 def applied_versions(conn: sqlite3.Connection) -> set[int]:
@@ -78,17 +91,46 @@ def init_db(db_path: Path | None = None) -> None:
 
     # We use a non-transactional connection here because CREATE VIRTUAL TABLE
     # on fts5 does not play nice with a surrounding BEGIN on some builds.
-    conn = sqlite3.connect(path, isolation_level=None, timeout=5.0)
+    conn: sqlite3.Connection | None = sqlite3.connect(
+        path,
+        isolation_level=None,
+        timeout=5.0,
+    )
+    config.secure_file(path)
     conn.row_factory = sqlite3.Row
     _apply_pragmas(conn)
+    rollback_backup: Path | None = None
     try:
         applied = applied_versions(conn)
-        for mf in migration_files:
-            # File name convention: NNN_description.sql -> version = int(NNN)
-            version = int(mf.name.split("_", 1)[0])
-            if version in applied:
-                continue
+        pending = [
+            migration
+            for migration in migration_files
+            if int(migration.name.split("_", 1)[0]) not in applied
+        ]
+        if applied and pending:
+            from hippocampus.storage import backup
+
+            rollback_backup = Path(
+                backup.create(source=path, prefix="pre-migration")["path"]
+            )
+        for mf in pending:
             sql = mf.read_text(encoding="utf-8")
             conn.executescript(sql)
-    finally:
+    except Exception:
         conn.close()
+        conn = None
+        if rollback_backup:
+            from hippocampus.storage import backup
+
+            backup.restore(
+                rollback_backup,
+                destination=path,
+                safety_backup=False,
+            )
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+        config.secure_file(path)
+        config.secure_file(Path(f"{path}-wal"))
+        config.secure_file(Path(f"{path}-shm"))

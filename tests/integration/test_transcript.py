@@ -7,6 +7,7 @@ def test_log_transcript_and_progress_share_session_context(hippo_env, monkeypatc
     from hippocampus.mcp import tools
 
     monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "codex")
+    monkeypatch.setenv("HIPPO_TRANSCRIPT_CAPTURE_ENABLED", "true")
     monkeypatch.setenv("HIPPOCAMPUS_TTY", "/dev/ttys123")
     monkeypatch.setenv("HIPPOCAMPUS_CWD", "/repo/a")
 
@@ -32,6 +33,7 @@ def test_log_transcript_dedups_recent_identical_rows(hippo_env, monkeypatch):
     from hippocampus.mcp import tools
 
     monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "devin")
+    monkeypatch.setenv("HIPPO_TRANSCRIPT_CAPTURE_ENABLED", "true")
     first = tools.log_transcript(role="assistant", content="visible answer")
     second = tools.log_transcript(role="assistant", content="visible answer")
 

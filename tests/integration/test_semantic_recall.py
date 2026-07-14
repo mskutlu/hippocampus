@@ -160,6 +160,27 @@ def test_rrf_consensus_beats_single_source(hippo_env, monkeypatch):
     assert out["fragments"][0]["scores"]["semantic_rank"] == 2
 
 
+def test_semantic_weight_can_be_zero(hippo_env, monkeypatch):
+    from hippocampus.embeddings import search as semantic_search
+    from hippocampus.mcp import tools
+    from hippocampus.storage import fragments as F
+
+    fts_hit = F.create("alpha fts", summary="fts")
+    semantic_hit = F.create("bravo semantic", summary="semantic")
+    monkeypatch.setattr(F, "search_fts", lambda **kwargs: [fts_hit])
+    monkeypatch.setattr(
+        semantic_search,
+        "semantic_topk",
+        lambda query, k=5: [(semantic_hit.id, 0.99)],
+    )
+    monkeypatch.setenv("HIPPO_SEMANTIC_WEIGHT", "0")
+
+    out = tools.recall(query="anything", limit=2)
+
+    assert out["semantic_weight"] == 0.0
+    assert out["fragments"][0]["id"] == fts_hit.id
+
+
 def test_recall_falls_back_to_fts_without_provider(hippo_env, monkeypatch):
     """When no embedding provider is configured, recall still works (FTS only)."""
     import hippocampus.embeddings as E

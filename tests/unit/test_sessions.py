@@ -132,6 +132,15 @@ def test_explicit_session_key_wins(clean_session_env):
     assert sessions.derive_session_key() == "my-explicit-key"
 
 
+def test_open_session_reuses_active_context(hippo_env):
+    sessions = _sessions()
+
+    first = sessions.open_session("devin", session_key="same")
+    second = sessions.open_session("devin", session_key="same")
+
+    assert second == first
+
+
 def test_multi_root_workspace_uses_first(clean_session_env):
     """Multi-root workspaces key off the first root (matches MCP + hook)."""
     sessions = _sessions()

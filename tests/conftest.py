@@ -26,6 +26,7 @@ def hippo_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HIPPOCAMPUS_HOME", str(home))
     monkeypatch.setenv("HIPPOCAMPUS_VAULT", str(vault))
     monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "pytest")
+    monkeypatch.setenv("HIPPO_EMBEDDING_PROVIDER", "disabled")
 
     # Force-reload modules that cached paths at import time.
     for mod_name in list(sys.modules):
