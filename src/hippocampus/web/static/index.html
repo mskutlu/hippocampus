@@ -16,6 +16,8 @@
     --warn: #d29922;
     --bad: #f85149;
     --pin: #e3b341;
+    --violet: #a371f7;
+    --cyan: #39c5cf;
   }
   * { box-sizing: border-box; }
   body {
@@ -63,7 +65,7 @@
   th { color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
   code, .mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
   .pinned { color: var(--pin); }
-  button.act, input[type=text], input[type=number], textarea, select {
+  button.act, input[type=text], input[type=search], input[type=number], input[type=date], textarea, select {
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
@@ -100,6 +102,42 @@
   .kind-note { background: #30363d; color: #e6edf3; }
   .spinner { display: none; color: var(--muted); font-size: 12px; }
   .spinner.on { display: inline; }
+  .graph-controls { flex-wrap: wrap; align-items: end; }
+  .graph-controls label { color: var(--muted); font-size: 12px; }
+  .graph-controls label > input { display: block; margin-top: 3px; }
+  #graph-search { min-width: 240px; }
+  #graph-canvas-wrap {
+    position: relative;
+    height: 640px;
+    min-height: 380px;
+    margin-top: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #graph-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  #graph-canvas.dragging { cursor: grabbing; }
+  #graph-tooltip {
+    display: none;
+    position: absolute;
+    width: max-content;
+    max-width: 320px;
+    padding: 8px 10px;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    pointer-events: none;
+    white-space: pre-wrap;
+  }
+  #graph-status { margin-top: 10px; }
+  @media (max-width: 700px) {
+    nav { overflow-x: auto; padding: 0 8px; }
+    nav button { padding: 10px 12px; }
+    main { padding: 12px; }
+    #graph-canvas-wrap { height: 480px; }
+  }
 </style>
 </head>
 <body>
@@ -111,6 +149,7 @@
 <nav>
   <button data-tab="dashboard" class="active">Dashboard</button>
   <button data-tab="fragments">Fragments</button>
+  <button data-tab="graph">Graph</button>
   <button data-tab="working">Working</button>
   <button data-tab="feedback">Feedback</button>
   <button data-tab="settings">Settings</button>
@@ -159,6 +198,43 @@
         <button class="act" onclick="loadFragments()">Refresh</button>
       </div>
       <table id="frag-table" style="margin-top:12px;"><thead><tr><th>conf</th><th>acc</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-graph" hidden>
+    <div class="panel">
+      <h2>Memory graph</h2>
+      <div class="row graph-controls">
+        <label>Minimum edge weight
+          <input type="number" id="graph-weight" value="5" min="0" step="1" style="width:110px" />
+        </label>
+        <label>Minimum confidence
+          <input type="number" id="graph-confidence" value="0" min="0" max="1" step="0.05" style="width:110px" />
+        </label>
+        <label>Exact tag
+          <input type="text" id="graph-tag" placeholder="optional" style="width:150px" />
+        </label>
+        <label>Source type
+          <input type="text" id="graph-source" placeholder="optional" style="width:150px" />
+        </label>
+        <label>Created after
+          <input type="date" id="graph-after" />
+        </label>
+        <label>Created before
+          <input type="date" id="graph-before" />
+        </label>
+        <label><input type="checkbox" id="graph-pinned" /> pinned only</label>
+        <button class="act" onclick="loadGraph()">Load</button>
+        <button class="act" onclick="resetGraphView()">Reset view</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input type="search" id="graph-search" placeholder="Highlight a memory by summary, tag, or id" />
+      </div>
+      <div id="graph-status" class="mono" aria-live="polite"></div>
+      <div id="graph-canvas-wrap">
+        <canvas id="graph-canvas" role="img" aria-label="Interactive graph of memory fragments and their weighted associations"></canvas>
+        <div id="graph-tooltip" role="status"></div>
+      </div>
     </div>
   </section>
 
@@ -238,10 +314,11 @@ document.querySelectorAll('nav button').forEach(btn => {
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
-    ['dashboard', 'fragments', 'working', 'feedback', 'settings'].forEach(t => {
+    ['dashboard', 'fragments', 'graph', 'working', 'feedback', 'settings'].forEach(t => {
       document.getElementById(`tab-${t}`).hidden = t !== tab;
     });
     if (tab === 'fragments') loadFragments();
+    if (tab === 'graph') loadGraph();
     if (tab === 'working') loadProgress();
     if (tab === 'feedback') loadFeedback();
     if (tab === 'settings') loadSettings();
@@ -335,6 +412,338 @@ async function createFragment() {
   document.getElementById('new-pin').checked = false;
   await loadFragments();
 }
+
+const graphState = {
+  nodes: [],
+  edges: [],
+  connected: [],
+  byId: new Map(),
+  transform: { x: 0, y: 0, k: 1 },
+  hovered: null,
+  selected: null,
+  search: '',
+  frame: null,
+  dragging: false,
+  moved: false,
+  pointer: null,
+};
+const graphCanvas = document.getElementById('graph-canvas');
+const graphWrap = document.getElementById('graph-canvas-wrap');
+const graphTooltip = document.getElementById('graph-tooltip');
+
+function graphParams() {
+  const params = new URLSearchParams({
+    min_weight: document.getElementById('graph-weight').value || '5',
+    min_confidence: document.getElementById('graph-confidence').value || '0',
+  });
+  const values = {
+    tag: document.getElementById('graph-tag').value.trim(),
+    source_type: document.getElementById('graph-source').value.trim(),
+    created_after: document.getElementById('graph-after').value,
+    created_before: document.getElementById('graph-before').value,
+  };
+  Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); });
+  if (document.getElementById('graph-pinned').checked) params.set('pinned_only', 'true');
+  return params;
+}
+
+async function loadGraph() {
+  const payload = await api(`/api/graph?${graphParams()}`);
+  graphState.nodes = payload.nodes;
+  graphState.edges = payload.edges;
+  graphState.selected = null;
+  graphState.hovered = null;
+  graphState.transform = { x: 0, y: 0, k: 1 };
+  prepareGraph();
+  document.getElementById('graph-status').textContent =
+    `${payload.counts.nodes} memories · ${payload.counts.edges} edges · ` +
+    `${payload.counts.connected} connected · ${payload.counts.isolated} isolated`;
+}
+
+function graphGroup(node) {
+  const ignored = new Set(['session-summary', 'auto-distilled', 'codex', 'devin', 'cursor', 'claude-code']);
+  return node.tags.find(tag => !ignored.has(tag) && !tag.startsWith('log_progress_auto:')) || node.source_type;
+}
+
+function graphHash(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  return Math.abs(hash);
+}
+
+function graphPalette() {
+  const style = getComputedStyle(document.documentElement);
+  return ['--accent', '--good', '--warn', '--bad', '--violet', '--cyan']
+    .map(name => style.getPropertyValue(name).trim());
+}
+
+function fitGraphCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const width = graphWrap.clientWidth;
+  const height = graphWrap.clientHeight;
+  const pixelWidth = Math.max(1, Math.round(width * dpr));
+  const pixelHeight = Math.max(1, Math.round(height * dpr));
+  if (graphCanvas.width !== pixelWidth) graphCanvas.width = pixelWidth;
+  if (graphCanvas.height !== pixelHeight) graphCanvas.height = pixelHeight;
+  return { width, height, dpr };
+}
+
+function prepareGraph() {
+  if (graphState.frame) cancelAnimationFrame(graphState.frame);
+  const { width, height } = fitGraphCanvas();
+  const degree = new Map(graphState.nodes.map(node => [node.id, 0]));
+  graphState.edges.forEach(edge => {
+    degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+  });
+  const groups = new Map();
+  graphState.nodes.forEach(node => {
+    node.degree = degree.get(node.id) || 0;
+    node.group = graphGroup(node);
+    node.radius = Math.min(9, 2.5 + Math.sqrt(node.accessed) * 0.25 + node.confidence * 1.5);
+    node.vx = 0;
+    node.vy = 0;
+    if (node.degree) {
+      if (!groups.has(node.group)) groups.set(node.group, []);
+      groups.get(node.group).push(node);
+    }
+  });
+  const activeHeight = height * 0.82;
+  const groupEntries = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  groupEntries.forEach(([, nodes], groupIndex) => {
+    const groupAngle = groupIndex * 2.399963;
+    const groupRadius = Math.sqrt(groupIndex / Math.max(1, groupEntries.length)) * Math.min(width, activeHeight) * 0.3;
+    const centerX = width / 2 + Math.cos(groupAngle) * groupRadius;
+    const centerY = activeHeight / 2 + Math.sin(groupAngle) * groupRadius;
+    nodes.forEach((node, index) => {
+      const angle = index * 2.399963;
+      const radius = Math.sqrt(index + 1) * 5;
+      node.x = centerX + Math.cos(angle) * radius;
+      node.y = centerY + Math.sin(angle) * radius;
+      node.centerX = centerX;
+      node.centerY = centerY;
+    });
+  });
+  const isolated = graphState.nodes.filter(node => !node.degree);
+  const columns = Math.max(1, Math.floor(width / 8));
+  const rows = Math.max(1, Math.ceil(isolated.length / columns));
+  isolated.forEach((node, index) => {
+    node.x = ((index % columns) + 0.5) * width / columns;
+    node.y = activeHeight + ((Math.floor(index / columns) + 0.5) * (height - activeHeight) / rows);
+  });
+  graphState.connected = graphState.nodes.filter(node => node.degree);
+  graphState.byId = new Map(graphState.nodes.map(node => [node.id, node]));
+  runGraphLayout(0);
+}
+
+function simulateGraph() {
+  const nodes = graphState.connected;
+  for (let i = 0; i < nodes.length; i += 1) {
+    const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const b = nodes[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const distanceSquared = dx * dx + dy * dy + 20;
+      if (distanceSquared > 6400) continue;
+      const force = 12 / distanceSquared;
+      a.vx -= dx * force;
+      a.vy -= dy * force;
+      b.vx += dx * force;
+      b.vy += dy * force;
+    }
+  }
+  graphState.edges.forEach(edge => {
+    const a = graphState.byId.get(edge.source);
+    const b = graphState.byId.get(edge.target);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+    const force = (distance - 35) * 0.0015 * Math.min(2, Math.log1p(edge.weight));
+    a.vx += dx / distance * force;
+    a.vy += dy / distance * force;
+    b.vx -= dx / distance * force;
+    b.vy -= dy / distance * force;
+  });
+  const activeHeight = graphWrap.clientHeight * 0.82;
+  nodes.forEach(node => {
+    node.vx += (node.centerX - node.x) * 0.0003;
+    node.vy += (node.centerY - node.y) * 0.0003;
+    node.vx *= 0.82;
+    node.vy *= 0.82;
+    node.x = Math.max(8, Math.min(graphWrap.clientWidth - 8, node.x + Math.max(-5, Math.min(5, node.vx))));
+    node.y = Math.max(8, Math.min(activeHeight - 8, node.y + Math.max(-5, Math.min(5, node.vy))));
+  });
+}
+
+function runGraphLayout(iteration) {
+  if (iteration < 80) {
+    simulateGraph();
+    simulateGraph();
+  }
+  drawGraph();
+  if (iteration < 80) graphState.frame = requestAnimationFrame(() => runGraphLayout(iteration + 2));
+}
+
+function drawGraph() {
+  const { width, height, dpr } = fitGraphCanvas();
+  const context = graphCanvas.getContext('2d');
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.save();
+  context.translate(graphState.transform.x, graphState.transform.y);
+  context.scale(graphState.transform.k, graphState.transform.k);
+  const style = getComputedStyle(document.documentElement);
+  context.strokeStyle = style.getPropertyValue('--border').trim();
+  graphState.edges.forEach(edge => {
+    const source = graphState.byId.get(edge.source);
+    const target = graphState.byId.get(edge.target);
+    context.globalAlpha = Math.min(0.75, 0.15 + Math.log1p(edge.weight) * 0.1);
+    context.lineWidth = Math.min(2.5, 0.4 + Math.log1p(edge.weight) * 0.25);
+    context.beginPath();
+    context.moveTo(source.x, source.y);
+    context.lineTo(target.x, target.y);
+    context.stroke();
+  });
+  const palette = graphPalette();
+  const search = graphState.search.toLowerCase();
+  graphState.nodes.forEach(node => {
+    const matches = search && `${node.id} ${node.summary} ${node.tags.join(' ')}`.toLowerCase().includes(search);
+    const active = node.id === graphState.hovered || node.id === graphState.selected || matches;
+    context.globalAlpha = node.degree ? 0.9 : 0.35;
+    context.fillStyle = palette[graphHash(node.group) % palette.length];
+    context.beginPath();
+    context.arc(node.x, node.y, node.radius + (active ? 2 : 0), 0, Math.PI * 2);
+    context.fill();
+    if (node.pinned || active) {
+      context.globalAlpha = 1;
+      context.strokeStyle = style.getPropertyValue(node.pinned ? '--pin' : '--text').trim();
+      context.lineWidth = node.pinned ? 1.5 : 1;
+      context.stroke();
+    }
+  });
+  const labelled = graphState.byId.get(graphState.hovered || graphState.selected);
+  if (labelled) {
+    context.globalAlpha = 1;
+    context.fillStyle = style.getPropertyValue('--text').trim();
+    context.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    context.fillText((labelled.summary || labelled.id).slice(0, 80), labelled.x + labelled.radius + 5, labelled.y - 5);
+  }
+  context.restore();
+  context.globalAlpha = 1;
+}
+
+function graphPoint(event) {
+  const rect = graphCanvas.getBoundingClientRect();
+  return {
+    screenX: event.clientX - rect.left,
+    screenY: event.clientY - rect.top,
+    x: (event.clientX - rect.left - graphState.transform.x) / graphState.transform.k,
+    y: (event.clientY - rect.top - graphState.transform.y) / graphState.transform.k,
+  };
+}
+
+function graphNodeAt(point) {
+  let closest = null;
+  let closestDistance = Infinity;
+  graphState.nodes.forEach(node => {
+    const distance = Math.hypot(node.x - point.x, node.y - point.y);
+    if (distance <= node.radius + 5 / graphState.transform.k && distance < closestDistance) {
+      closest = node;
+      closestDistance = distance;
+    }
+  });
+  return closest;
+}
+
+function showGraphTooltip(node, point) {
+  if (!node) {
+    graphTooltip.style.display = 'none';
+    return;
+  }
+  graphTooltip.textContent =
+    `${node.summary || node.id}\n${node.group} · confidence ${node.confidence.toFixed(3)} · accessed ${node.accessed}` +
+    `${node.pinned ? ' · pinned' : ''}`;
+  graphTooltip.style.display = 'block';
+  graphTooltip.style.maxWidth = `${Math.max(120, graphWrap.clientWidth - 16)}px`;
+  graphTooltip.style.left =
+    `${Math.max(8, Math.min(graphWrap.clientWidth - graphTooltip.offsetWidth - 8, point.screenX + 14))}px`;
+  graphTooltip.style.top = `${Math.max(8, point.screenY - 20)}px`;
+}
+
+function resetGraphView() {
+  graphState.transform = { x: 0, y: 0, k: 1 };
+  drawGraph();
+}
+
+graphCanvas.addEventListener('pointerdown', event => {
+  const point = graphPoint(event);
+  graphState.moved = false;
+  if (graphNodeAt(point)) return;
+  graphState.dragging = true;
+  graphState.pointer = { x: event.clientX, y: event.clientY };
+  graphCanvas.classList.add('dragging');
+  graphCanvas.setPointerCapture(event.pointerId);
+});
+graphCanvas.addEventListener('pointermove', event => {
+  if (graphState.dragging) {
+    const dx = event.clientX - graphState.pointer.x;
+    const dy = event.clientY - graphState.pointer.y;
+    graphState.transform.x += dx;
+    graphState.transform.y += dy;
+    graphState.pointer = { x: event.clientX, y: event.clientY };
+    graphState.moved = graphState.moved || Math.abs(dx) + Math.abs(dy) > 1;
+    drawGraph();
+    return;
+  }
+  const point = graphPoint(event);
+  const node = graphNodeAt(point);
+  graphState.hovered = node?.id || null;
+  showGraphTooltip(node, point);
+  drawGraph();
+});
+graphCanvas.addEventListener('pointerleave', () => {
+  graphState.hovered = null;
+  graphTooltip.style.display = 'none';
+  drawGraph();
+});
+graphCanvas.addEventListener('pointerup', event => {
+  graphState.dragging = false;
+  graphCanvas.classList.remove('dragging');
+  if (graphCanvas.hasPointerCapture(event.pointerId)) graphCanvas.releasePointerCapture(event.pointerId);
+});
+graphCanvas.addEventListener('click', event => {
+  if (graphState.moved) return;
+  const node = graphNodeAt(graphPoint(event));
+  if (!node) return;
+  graphState.selected = node.id;
+  drawGraph();
+  openFragment(node.id);
+});
+graphCanvas.addEventListener('wheel', event => {
+  event.preventDefault();
+  const point = graphPoint(event);
+  const nextScale = Math.max(0.25, Math.min(4, graphState.transform.k * Math.exp(-event.deltaY * 0.001)));
+  graphState.transform.x = point.screenX - point.x * nextScale;
+  graphState.transform.y = point.screenY - point.y * nextScale;
+  graphState.transform.k = nextScale;
+  drawGraph();
+}, { passive: false });
+document.getElementById('graph-search').addEventListener('input', event => {
+  graphState.search = event.target.value.trim();
+  drawGraph();
+});
+document.getElementById('graph-search').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || !graphState.search) return;
+  const search = graphState.search.toLowerCase();
+  const match = graphState.nodes.find(node =>
+    `${node.id} ${node.summary} ${node.tags.join(' ')}`.toLowerCase().includes(search)
+  );
+  if (match) openFragment(match.id);
+});
+window.addEventListener('resize', () => {
+  if (graphState.nodes.length && !document.getElementById('tab-graph').hidden) prepareGraph();
+});
 
 async function openFragment(id) {
   const res = await api(`/api/fragments/${id}`);

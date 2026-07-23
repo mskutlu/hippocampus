@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import secrets
 import webbrowser
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -299,6 +300,28 @@ def create_app() -> "FastAPI":
     @app.get("/api/feedback")
     def api_feedback(limit: int = Query(default=50, ge=1, le=500)) -> dict:
         return {"events": feedback_store.recent(limit=limit)}
+
+    @app.get("/api/graph")
+    def api_graph(
+        min_weight: float = Query(default=5.0, ge=0.0),
+        tag: str | None = Query(default=None, max_length=100),
+        source_type: str | None = Query(default=None, max_length=100),
+        min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+        pinned_only: bool = False,
+        created_after: date | None = None,
+        created_before: date | None = None,
+    ) -> dict:
+        from hippocampus.storage import associations
+
+        return associations.get_graph(
+            min_weight=min_weight,
+            tag=tag,
+            source_type=source_type,
+            min_confidence=min_confidence,
+            pinned_only=pinned_only,
+            created_after=created_after.isoformat() if created_after else None,
+            created_before=created_before.isoformat() if created_before else None,
+        )
 
     @app.get("/api/associations/{fragment_id}")
     def api_associations(fragment_id: str) -> dict:
