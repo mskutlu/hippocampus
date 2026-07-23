@@ -86,6 +86,41 @@ def test_recall_endpoint(web_client):
     assert r.json()["count"] >= 1
 
 
+def test_graph_endpoint_filters_nodes_and_edges(web_client):
+    client, token = web_client
+    from hippocampus.storage import associations
+
+    first = client.post(
+        "/api/fragments",
+        json={"content": "first", "summary": "First", "tags": ["graph"], "pinned": True},
+        headers=_hdr(token),
+    ).json()["fragment"]
+    second = client.post(
+        "/api/fragments",
+        json={"content": "second", "summary": "Second", "tags": ["graph"]},
+        headers=_hdr(token),
+    ).json()["fragment"]
+    third = client.post(
+        "/api/fragments",
+        json={"content": "third", "summary": "Third", "tags": ["other"]},
+        headers=_hdr(token),
+    ).json()["fragment"]
+    associations.strengthen(first["id"], second["id"], weight_delta=5)
+    associations.strengthen(second["id"], third["id"], weight_delta=2)
+
+    payload = client.get("/api/graph").json()
+    assert payload["counts"] == {"nodes": 3, "edges": 1, "connected": 2, "isolated": 1}
+    assert payload["edges"][0]["weight"] == 5
+
+    tagged = client.get("/api/graph?tag=graph&min_weight=1").json()
+    assert {node["id"] for node in tagged["nodes"]} == {first["id"], second["id"]}
+    assert tagged["counts"]["edges"] == 1
+
+    pinned = client.get("/api/graph?pinned_only=true").json()
+    assert [node["id"] for node in pinned["nodes"]] == [first["id"]]
+    assert pinned["counts"]["isolated"] == 1
+
+
 def test_progress_endpoints(web_client):
     client, token = web_client
     r = client.post("/api/progress", json={"kind": "goal", "content": "ship web ui", "client": "devin"}, headers=_hdr(token))
