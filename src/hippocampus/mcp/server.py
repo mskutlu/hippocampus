@@ -1,7 +1,8 @@
 """Hippocampus MCP server — stdio transport.
 
 Exposes the 8 tools from `hippocampus.mcp.tools` to any MCP-compatible AI
-client (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity, ZCode, ...).
+client (Devin, Claude Code, Codex, OpenCode, Windsurf, Antigravity, ZCode,
+Zed, ...).
 
 Logging goes to stderr + a log file only — never stdout, which is reserved for
 JSON-RPC messages by the stdio transport.

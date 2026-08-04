@@ -44,6 +44,22 @@ ever needing to observe the compaction:
 - New settings: `handoff_enabled` (default true), `handoff_dir`
   (default `~/.hippocampus/handoffs`).
 
+### Added — Zed client support
+
+[Zed](https://zed.dev) is now a registered Hippocampus client.
+
+- `hippo register` writes the MCP entry to `~/.config/zed/settings.json`
+  (`%APPDATA%\Zed\settings.json` on Windows) under Zed's native
+  `context_servers` schema (new `zed-json` format branch) — not the
+  `mcpServers` shape some other clients use. Re-registering preserves any
+  extra keys on the entry, such as Zed's per-tool `tools` permission
+  overrides.
+- `hippo inject` upserts the long-term + working blocks into
+  `~/.config/zed/AGENTS.md`, Zed's global always-on instructions file (the
+  successor to Zed's Rules Library as of Zed 1.4+).
+- No lifecycle hooks: Zed has no shell hook system, so (like Codex/OpenCode/
+  Windsurf/ZCode) it relies on the rules file plus direct MCP tool calls.
+
 ### Added — ZCode client support
 
 [ZCode](https://zcode.z.ai) (z.ai's desktop harness for GLM) is now a
