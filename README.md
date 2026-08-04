@@ -1,7 +1,7 @@
 # Hippocampus
 
 > Shared biologically-inspired long-term **and** short-term memory for AI assistants.
-> One backend, auto-injected into Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, and Pi.
+> One backend, auto-injected into Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed, and Pi.
 
 The human brain does not record everything — it synthesizes, distills, and leaves behind fragments.
 Frequently accessed knowledge grows stronger; unused knowledge fades and is forgotten.
@@ -135,8 +135,8 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
    bare `hippo` command works in every shell.
 2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
 3. Installs periodic jobs **on macOS only** (launchd agents: hourly decay, 10-minute inject, daily archive). On Linux / WSL it prints the `crontab -e` lines to paste. On Windows-native it points you at Task Scheduler.
-4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode). For Cursor this is `~/.cursor/mcp.json`, for ZCode `~/.zcode/cli/config.json`. For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all its tools through `pi.registerTool()`.
-5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for ZCode `~/.zcode/AGENTS.md`, for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
+4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed). For Cursor this is `~/.cursor/mcp.json`, for ZCode `~/.zcode/cli/config.json`, for Zed `~/.config/zed/settings.json` (under `context_servers`). For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all its tools through `pi.registerTool()`.
+5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for ZCode `~/.zcode/AGENTS.md`, for Zed `~/.config/zed/AGENTS.md` (Zed's global instructions file), for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
 ### Updating an existing install
@@ -165,8 +165,8 @@ What those commands update:
 - `hippo init` applies new SQLite migrations, including session keys and
   transcript history.
 - `hippo register` refreshes MCP config for Devin, Claude Code, Cursor, Codex,
-  OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, and refreshes Pi's
-  bundled extension.
+  OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed, and refreshes
+  Pi's bundled extension.
 - `hippo install-hooks` refreshes lifecycle hooks for Devin, Claude Code,
   Cursor, and Antigravity.
 - `hippo inject --commit` refreshes the always-on rules files, including
@@ -177,7 +177,9 @@ What those commands update:
 Restart any AI client after `register`, `install-hooks`, or `inject` so it
 reloads MCP config and global instructions. Codex users do not need shell hooks,
 but should restart Codex after updates so `~/.codex/config.toml` and
-`~/.codex/AGENTS.md` are re-read.
+`~/.codex/AGENTS.md` are re-read. Zed users likewise don't need shell hooks —
+restart Zed so it reloads `~/.config/zed/settings.json` and
+`~/.config/zed/AGENTS.md`.
 
 ### Linux / WSL — setting up cron
 
@@ -241,6 +243,11 @@ does not currently consume these shell lifecycle hooks; use `log_progress`,
 `recall`, `remember`, `log_transcript`, and the other MCP tools directly inside a
 Codex session.
 
+Zed is covered the same way: MCP registration (`context_servers.hippocampus`
+in `~/.config/zed/settings.json`) plus the global `~/.config/zed/AGENTS.md`
+injection file. Zed has no shell lifecycle hook system, so it's not in the
+table below either — use the MCP tools directly inside a Zed Agent session.
+
 | Hook | Devin | Claude Code | Cursor | Antigravity | Pi | What it does (v1.5+) |
 |---|---|---|---|---|---|---|
 | `SessionStart` / `sessionStart` / `session_start` | ✓ | ✓ | ✓ | ✓ | ✓ | Opens a Hippocampus session and injects the memory protocol **+ the live working ledger + top long-term fragments** as context. The AI sees real state from turn 0 instead of whatever the rules file happened to hold. On Cursor this uses the `sessionStart` hook's `additional_context` field — the one Cursor event that supports context injection. |
@@ -254,6 +261,37 @@ Before 1.5.0 the WORKING block was kept up-to-date on disk but the AI client onl
 Hook auto-install works on macOS, Linux, and WSL (the hooks are bash scripts). Native Windows users need to translate them into PowerShell or run Devin inside WSL.
 
 Token cost is bounded: each hook payload is capped at `hook_inject_budget_chars` (default 3500 chars ≈ 800 tokens). Adjust or disable per layer with `hippo config set hook_inject_working false` / `hook_inject_fragments false` / `hook_fragment_limit 3` / `hook_inject_budget_chars 2000`.
+
+### Zed
+
+`hippo register` adds Hippocampus to `~/.config/zed/settings.json` (or
+`%APPDATA%\Zed\settings.json` on Windows) under a top-level `context_servers`
+key — Zed's native MCP schema, not the `mcpServers` shape some other clients
+use:
+
+```json
+{
+  "context_servers": {
+    "hippocampus": {
+      "command": "hippocampus-mcp",
+      "args": [],
+      "env": {
+        "HIPPOCAMPUS_CLIENT": "zed"
+      }
+    }
+  }
+}
+```
+
+`hippo inject` writes the long-term and working-memory marker blocks into
+`~/.config/zed/AGENTS.md`, Zed's global always-on instructions file (the
+successor to Zed's old Rules Library, per Zed 1.4+). Re-registering preserves
+any extra keys you've added to the entry yourself, such as Zed's per-tool
+`tools` permission overrides.
+
+Zed has no shell lifecycle hooks, so per-turn memory comes from the always-on
+`AGENTS.md` plus the MCP `recall` tool, same as Codex/OpenCode/Windsurf/ZCode.
+After installing, restart Zed so it reloads both files.
 
 ### Cursor
 
@@ -348,6 +386,7 @@ OK  Windsurf       long:ok working:ok mcp:ok
 OK  Antigravity    long:ok working:ok mcp:ok
 OK  VS Code Copilot long:ok working:ok mcp:ok
 OK  ZCode          long:ok working:ok mcp:ok
+OK  Zed            long:ok working:ok mcp:ok
 OK  Pi Agent       long:ok working:ok mcp:ok      # mcp:ok here means "extension installed"
 OK  launchd plist OK                              # macOS only
 OK  settings: working_block_mode=per_client …
@@ -421,8 +460,9 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ AI Clients (via MCP stdio)                                   │
-│  Devin · Claude Code · Cursor · Codex · OpenCode · Windsurf  │
-│  · Antigravity · VS Code Copilot · ZCode · Pi (via extension)│
+│ Devin · Claude Code · Cursor · Codex · OpenCode · Windsurf   │
+│ · Antigravity · VS Code Copilot · ZCode · Zed                │
+│ · Pi (via extension)                                         │
 └───────────────────────┬──────────────────────────────────────┘
                         │
                         ▼
@@ -474,6 +514,7 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 │   ~/.antigravity/rules/global_rules.md                       │
 │   ~/.copilot/instructions/hippocampus.instructions.md        │
 │   ~/.zcode/AGENTS.md                                         │
+│   ~/.config/zed/AGENTS.md                                    │
 │   ~/.pi/agent/AGENTS.md                                      │
 │                                                              │
 │ Each file is backed up once to <path>.pre-hippocampus.bak.   │

@@ -25,7 +25,7 @@ class ClientSpec:
     rules_path: Path                # file receiving the injection block
     creation_header: str            # header used when creating a fresh rules file
     mcp_config_path: Path | None    # where to register the MCP server (optional)
-    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension' | 'zcode-json'
+    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension' | 'zcode-json' | 'zed-json'
 
     @property
     def exists(self) -> bool:
@@ -44,6 +44,19 @@ def _vscode_user_dir() -> Path:
             return Path(appdata) / "Code" / "User"
         return HOME / "AppData" / "Roaming" / "Code" / "User"
     return HOME / ".config" / "Code" / "User"
+
+
+def _zed_config_dir() -> Path:
+    """Zed keeps user config in the same place on macOS and Linux (no
+    Application Support convention like VS Code) and under %APPDATA% on
+    Windows. See docs/src/configuring-zed.md in zed-industries/zed.
+    """
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "Zed"
+        return HOME / "AppData" / "Roaming" / "Zed"
+    return HOME / ".config" / "zed"
 
 
 _VSCODE_COPILOT_HEADER = """---
@@ -161,6 +174,19 @@ CLIENTS: list[ClientSpec] = [
         creation_header="# ZCode Global Instructions",
         mcp_config_path=HOME / ".zcode" / "cli" / "config.json",
         mcp_config_format="zcode-json",
+    ),
+    # Zed reads a global AGENTS.md as always-on instructions (since Zed
+    # 1.4's Skills/Instructions rework) and registers MCP servers under a
+    # top-level `context_servers` key in settings.json — not `mcpServers`.
+    # Zed has no shell lifecycle hook system, so (like Codex/OpenCode/
+    # Windsurf/ZCode) it relies on the rules file plus direct MCP tool calls.
+    ClientSpec(
+        name="zed",
+        label="Zed",
+        rules_path=_zed_config_dir() / "AGENTS.md",
+        creation_header="# Zed Global Instructions",
+        mcp_config_path=_zed_config_dir() / "settings.json",
+        mcp_config_format="zed-json",
     ),
 ]
 
