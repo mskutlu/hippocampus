@@ -6,7 +6,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │ AI Clients (each over MCP stdio)                              │
 │ Devin · Claude Code · Codex · OpenCode · Windsurf             │
-│ · Antigravity · VS Code Copilot · ZCode · Zed                 │
+│ · Antigravity · VS Code Copilot · ZCode · Zed · Hermes Agent  │
 │ · Pi via extension                                            │
 └───────────────────────┬───────────────────────────────────────┘
                         │
@@ -52,6 +52,7 @@
 │   ~/.copilot/instructions/hippocampus.instructions.md         │
 │   ~/.zcode/AGENTS.md                                          │
 │   ~/.config/zed/AGENTS.md                                     │
+│   ~/.hermes/SOUL.md                                           │
 │   ~/.pi/agent/AGENTS.md                                       │
 └───────────────────────────────────────────────────────────────┘
 ```

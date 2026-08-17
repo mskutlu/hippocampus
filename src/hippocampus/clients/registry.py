@@ -25,7 +25,7 @@ class ClientSpec:
     rules_path: Path                # file receiving the injection block
     creation_header: str            # header used when creating a fresh rules file
     mcp_config_path: Path | None    # where to register the MCP server (optional)
-    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension' | 'zcode-json' | 'zed-json'
+    mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension' | 'zcode-json' | 'zed-json' | 'hermes-yaml'
 
     @property
     def exists(self) -> bool:
@@ -187,6 +187,18 @@ CLIENTS: list[ClientSpec] = [
         creation_header="# Zed Global Instructions",
         mcp_config_path=_zed_config_dir() / "settings.json",
         mcp_config_format="zed-json",
+    ),
+    # Hermes Agent reads MCP servers from ~/.hermes/config.yaml under
+    # `mcp_servers`. Its SOUL.md is loaded into every session as the global
+    # identity/context file, so it is the appropriate always-on injection
+    # target for the Hippocampus protocol and working-memory blocks.
+    ClientSpec(
+        name="hermes",
+        label="Hermes Agent",
+        rules_path=HOME / ".hermes" / "SOUL.md",
+        creation_header="# Hermes Agent Persona",
+        mcp_config_path=HOME / ".hermes" / "config.yaml",
+        mcp_config_format="hermes-yaml",
     ),
 ]
 

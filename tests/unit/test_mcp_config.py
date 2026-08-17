@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
 
 def _reload_clients_modules() -> None:
     # Pop both submodules AND the parent package so `from hippocampus.clients
@@ -400,3 +401,69 @@ def test_register_pi_installs_extension(tmp_path, monkeypatch):
     removed, _ = mcp_config.unregister(spec)
     assert removed is True
     assert mcp_config.is_registered(spec) is False
+
+
+def test_register_hermes_uses_yaml_mcp_servers_and_preserves_options(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("HIPPOCAMPUS_MCP_CMD", "/opt/fake/bin/hippocampus-mcp")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _reload_clients_modules()
+
+    from hippocampus.clients import mcp_config, registry
+
+    importlib.reload(registry)
+    importlib.reload(mcp_config)
+
+    spec = registry.by_name("hermes")
+    assert spec is not None
+    assert spec.mcp_config_format == "hermes-yaml"
+    assert spec.rules_path == fake_home / ".hermes" / "SOUL.md"
+    assert spec.mcp_config_path == fake_home / ".hermes" / "config.yaml"
+
+    spec.mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
+    spec.mcp_config_path.write_text(
+        yaml.safe_dump(
+            {
+                "model": {"default": "example"},
+                "mcp_servers": {
+                    "existing": {"command": "npx", "args": ["some-mcp"]},
+                    "hippocampus": {
+                        "command": "/old/hippocampus-mcp",
+                        "args": [],
+                        "env": {"KEEP_ME": "true", "HIPPOCAMPUS_CLIENT": "codex"},
+                        "tools": {"include": ["recall"]},
+                        "timeout": 120,
+                    },
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    changed, _ = mcp_config.register(spec)
+    assert changed is True
+    data = yaml.safe_load(spec.mcp_config_path.read_text(encoding="utf-8"))
+    assert data["model"]["default"] == "example"
+    assert "existing" in data["mcp_servers"]
+    entry = data["mcp_servers"]["hippocampus"]
+    assert entry["command"] == "/opt/fake/bin/hippocampus-mcp"
+    assert entry["args"] == []
+    assert entry["env"] == {"KEEP_ME": "true", "HIPPOCAMPUS_CLIENT": "hermes"}
+    assert entry["enabled"] is True
+    assert entry["tools"] == {"include": ["recall"]}
+    assert entry["timeout"] == 120
+    assert mcp_config.is_registered(spec) is True
+
+    changed_again, _ = mcp_config.register(spec)
+    assert changed_again is False
+
+    removed, _ = mcp_config.unregister(spec)
+    assert removed is True
+    data_after = yaml.safe_load(spec.mcp_config_path.read_text(encoding="utf-8"))
+    assert "hippocampus" not in data_after["mcp_servers"]
+    assert "existing" in data_after["mcp_servers"]
