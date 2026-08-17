@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from hippocampus.clients.registry import CLIENTS, ClientSpec
 
 MCP_ENTRY_NAME = "hippocampus"
@@ -68,6 +70,21 @@ def _load_json(path: Path) -> dict:
 def _write_json(path: Path, data: dict) -> None:
     _ensure_dir(path)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_yaml(path: Path, data: dict[str, Any]) -> None:
+    _ensure_dir(path)
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def _toml_string(value: str) -> str:
@@ -283,11 +300,77 @@ def _uninstall_pi_extension(spec: ClientSpec) -> tuple[bool, str]:
     return False, f"{spec.name}: nothing to remove at {dest}"
 
 
+def _hermes_entry(spec: ClientSpec, existing: Any = None) -> dict[str, Any]:
+    """Build a Hermes ``mcp_servers.hippocampus`` entry.
+
+    Hermes uses YAML and lets users add optional per-server controls (tool
+    filters, timeouts, and trust settings). Keep those controls on refresh
+    while ensuring the executable and client scope remain current.
+    """
+    cmd = _hippocampus_command()
+    prior = existing if isinstance(existing, dict) else {}
+    prior_env = prior.get("env") if isinstance(prior.get("env"), dict) else {}
+    return {
+        **prior,
+        "command": cmd["command"],
+        "args": cmd["args"],
+        "env": {**prior_env, "HIPPOCAMPUS_CLIENT": spec.name},
+        "enabled": True,
+    }
+
+
+def _hermes_is_registered(spec: ClientSpec) -> bool:
+    path = spec.mcp_config_path
+    if path is None or not path.exists():
+        return False
+    servers = _load_yaml(path).get("mcp_servers")
+    return isinstance(servers, dict) and MCP_ENTRY_NAME in servers
+
+
+def _install_hermes_yaml(spec: ClientSpec) -> tuple[bool, str]:
+    path = spec.mcp_config_path
+    if path is None:
+        return False, f"{spec.name}: no MCP config path configured"
+
+    data = _load_yaml(path)
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        data["mcp_servers"] = servers
+    entry = _hermes_entry(spec, servers.get(MCP_ENTRY_NAME))
+    if servers.get(MCP_ENTRY_NAME) == entry:
+        return False, f"{spec.name}: already registered at {path}"
+
+    _backup(path)
+    servers[MCP_ENTRY_NAME] = entry
+    _write_yaml(path, data)
+    return True, f"{spec.name}: registered at {path}"
+
+
+def _uninstall_hermes_yaml(spec: ClientSpec) -> tuple[bool, str]:
+    path = spec.mcp_config_path
+    if path is None or not path.exists():
+        return False, f"{spec.name}: no config to clean"
+    data = _load_yaml(path)
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict) or MCP_ENTRY_NAME not in servers:
+        return False, f"{spec.name}: entry not present"
+
+    _backup(path)
+    servers.pop(MCP_ENTRY_NAME)
+    if not servers:
+        data.pop("mcp_servers", None)
+    _write_yaml(path, data)
+    return True, f"{spec.name}: removed from {path}"
+
+
 def is_registered(spec: ClientSpec) -> bool:
     if spec.mcp_config_format == "codex-toml":
         return _codex_toml_is_registered(spec)
     if spec.mcp_config_format == "pi-extension":
         return _pi_extension_is_registered(spec)
+    if spec.mcp_config_format == "hermes-yaml":
+        return _hermes_is_registered(spec)
     path = spec.mcp_config_path
     if path is None or not path.exists():
         return False
@@ -313,6 +396,8 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
         return _install_pi_extension(spec)
     if fmt == "codex-toml":
         return _install_codex_toml(spec)
+    if fmt == "hermes-yaml":
+        return _install_hermes_yaml(spec)
 
     cmd = _hippocampus_command()
     _backup(path)
@@ -362,6 +447,8 @@ def unregister(spec: ClientSpec) -> tuple[bool, str]:
         return _uninstall_codex_toml(spec)
     if spec.mcp_config_format == "pi-extension":
         return _uninstall_pi_extension(spec)
+    if spec.mcp_config_format == "hermes-yaml":
+        return _uninstall_hermes_yaml(spec)
     path = spec.mcp_config_path
     if path is None or not path.exists():
         return False, f"{spec.name}: no config to clean"

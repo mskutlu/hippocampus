@@ -135,8 +135,8 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
    bare `hippo` command works in every shell.
 2. Creates `~/.hippocampus/` for runtime state (DB, logs, backups, model cache).
 3. Installs periodic jobs **on macOS only** (launchd agents: hourly decay, 10-minute inject, daily archive). On Linux / WSL it prints the `crontab -e` lines to paste. On Windows-native it points you at Task Scheduler.
-4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed). For Cursor this is `~/.cursor/mcp.json`, for ZCode `~/.zcode/cli/config.json`, for Zed `~/.config/zed/settings.json` (under `context_servers`). For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all its tools through `pi.registerTool()`.
-5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for ZCode `~/.zcode/AGENTS.md`, for Zed `~/.config/zed/AGENTS.md` (Zed's global instructions file), for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
+4. Registers the Hippocampus MCP server in every detected AI client's config (Devin, Claude Code, Cursor, Codex, OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed, Hermes Agent). For Cursor this is `~/.cursor/mcp.json`, for ZCode `~/.zcode/cli/config.json`, for Zed `~/.config/zed/settings.json` (under `context_servers`), and for Hermes `~/.hermes/config.yaml` (under `mcp_servers`). For Pi — which deliberately ships without native MCP — it instead installs a bundled TypeScript extension at `~/.pi/agent/extensions/hippocampus/` that spawns the MCP server and re-exposes all its tools through `pi.registerTool()`.
+5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for ZCode `~/.zcode/AGENTS.md`, for Zed `~/.config/zed/AGENTS.md` (Zed's global instructions file), for Hermes `~/.hermes/SOUL.md` (loaded for every Hermes session), and for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
 ### Updating an existing install
@@ -165,7 +165,7 @@ What those commands update:
 - `hippo init` applies new SQLite migrations, including session keys and
   transcript history.
 - `hippo register` refreshes MCP config for Devin, Claude Code, Cursor, Codex,
-  OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed, and refreshes
+  OpenCode, Windsurf, Antigravity, VS Code Copilot, ZCode, Zed, Hermes, and refreshes
   Pi's bundled extension.
 - `hippo install-hooks` refreshes lifecycle hooks for Devin, Claude Code,
   Cursor, and Antigravity.
