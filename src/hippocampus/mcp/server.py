@@ -10,7 +10,6 @@ JSON-RPC messages by the stdio transport.
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from datetime import datetime, timezone
@@ -19,7 +18,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import Tool, ToolAnnotations
 
 from hippocampus import config
 from hippocampus.mcp import tools as T
@@ -47,6 +46,8 @@ log = logging.getLogger("hippocampus.mcp")
 # Tool definitions
 # ---------------------------------------------------------------------------
 
+_READ_ONLY = ToolAnnotations(readOnlyHint=True)
+
 TOOL_SPECS: list[Tool] = [
     Tool(
         name="recall",
@@ -69,6 +70,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["query"],
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="remember",
@@ -89,6 +91,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["content"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="forget",
@@ -104,6 +107,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["fragment_id"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="pin",
@@ -113,6 +117,7 @@ TOOL_SPECS: list[Tool] = [
             "properties": {"fragment_id": {"type": "string"}},
             "required": ["fragment_id"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
     ),
     Tool(
         name="unpin",
@@ -122,6 +127,7 @@ TOOL_SPECS: list[Tool] = [
             "properties": {"fragment_id": {"type": "string"}},
             "required": ["fragment_id"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
     ),
     Tool(
         name="get_fragment",
@@ -137,6 +143,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["fragment_id"],
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="list_fragments",
@@ -152,6 +159,7 @@ TOOL_SPECS: list[Tool] = [
                 "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
             },
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="top_fragments",
@@ -165,11 +173,13 @@ TOOL_SPECS: list[Tool] = [
                 "limit": {"type": "integer", "default": 15, "minimum": 1, "maximum": 100},
             },
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="get_stats",
         description="Health dashboard: counts, average confidence, recent feedback events.",
         inputSchema={"type": "object", "properties": {}},
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="log_progress",
@@ -201,6 +211,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["kind", "content"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="get_progress",
@@ -215,6 +226,7 @@ TOOL_SPECS: list[Tool] = [
                 "client": {"type": "string"},
             },
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="get_handoff",
@@ -229,6 +241,7 @@ TOOL_SPECS: list[Tool] = [
             "type": "object",
             "properties": {"client": {"type": "string"}},
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="log_transcript",
@@ -259,6 +272,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["role", "content"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="get_transcript",
@@ -270,6 +284,7 @@ TOOL_SPECS: list[Tool] = [
                 "limit": {"type": "integer", "default": 200, "minimum": 1, "maximum": 1000},
             },
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="end_progress",
@@ -288,6 +303,7 @@ TOOL_SPECS: list[Tool] = [
                 "tags": {"type": "array", "items": {"type": "string"}},
             },
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="undo_last_entry",
@@ -300,6 +316,7 @@ TOOL_SPECS: list[Tool] = [
             "type": "object",
             "properties": {"client": {"type": "string"}},
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False),
     ),
     Tool(
         name="wiki_init",
@@ -314,21 +331,25 @@ TOOL_SPECS: list[Tool] = [
                 "materialize": {"type": "boolean", "default": False},
             },
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
     ),
     Tool(
         name="wiki_status",
         description="Return DB-backed wiki status for the project, or wiki_not_initialized.",
         inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="wiki_lint",
         description="Run wiki health checks for the project.",
         inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="wiki_export",
         description="Materialize DB-backed wiki pages to markdown files.",
         inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
     ),
     Tool(
         name="wiki_ingest",
@@ -343,6 +364,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["raw_path"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="wiki_query",
@@ -356,6 +378,7 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["question"],
         },
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="wiki_file_answer",
@@ -371,11 +394,13 @@ TOOL_SPECS: list[Tool] = [
             },
             "required": ["title", "markdown"],
         },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
         name="wiki_index",
         description="Refresh and return the rendered DB-backed wiki index.",
         inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
+        annotations=_READ_ONLY,
     ),
     Tool(
         name="wiki_log",
@@ -387,6 +412,7 @@ TOOL_SPECS: list[Tool] = [
                 "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
             },
         },
+        annotations=_READ_ONLY,
     ),
 ]
 
@@ -424,10 +450,6 @@ TOOL_DISPATCH = {
 }
 
 
-def _text_response(payload: Any) -> list[TextContent]:
-    return [TextContent(type="text", text=json.dumps(payload, ensure_ascii=False, indent=2))]
-
-
 # ---------------------------------------------------------------------------
 # Server bootstrap
 # ---------------------------------------------------------------------------
@@ -441,22 +463,18 @@ async def handle_list_tools() -> list[Tool]:
 
 
 @server.call_tool()
-async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
         log.warning("unknown tool requested: %s", name)
-        return _text_response({"error": f"unknown tool: {name}"})
+        raise ValueError(f"unknown tool: {name}")
     args = arguments or {}
     log.info("tool=%s args=%s", name, {k: (v if not isinstance(v, str) else v[:80]) for k, v in args.items()})
     try:
-        result = fn(**args)
-        return _text_response(result)
-    except TypeError as e:
-        log.exception("bad arguments for %s", name)
-        return _text_response({"error": f"bad arguments: {e}"})
-    except Exception as e:  # noqa: BLE001 — surface to caller
+        return fn(**args)
+    except Exception:
         log.exception("tool failed: %s", name)
-        return _text_response({"error": str(e), "tool": name})
+        raise
 
 
 async def _run() -> None:
