@@ -8,7 +8,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "msk" }]
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.27,<2",
     "python-ulid>=2.2.0",
     "pyyaml>=6.0",
     "click>=8.1.0",

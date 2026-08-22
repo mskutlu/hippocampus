@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Fixed — correct MCP tool error/annotation reporting
+
+- Pinned `mcp>=1.27,<2` in `pyproject.toml`. PyPI's `mcp` now defaults to SDK
+  v2 (an incompatible rework of the low-level `Server` API this project
+  uses); an unbounded `>=1.0.0` pin risked pulling 2.x on a fresh install.
+- `handle_call_tool` no longer wraps every result in `TextContent` and
+  swallows exceptions into a JSON `{"error": ...}` blob returned as a
+  *successful* call. It now returns the tool's raw `dict`, which lets the
+  installed SDK populate `structuredContent` automatically, and lets real
+  failures (unknown tool, bad arguments, internal errors) propagate so the
+  SDK reports them as `isError=True` instead of a disguised success.
+- All 25 tool specs in `TOOL_SPECS` now declare `ToolAnnotations`
+  (`readOnlyHint`/`destructiveHint`/`idempotentHint`) so clients can tell
+  read tools (`recall`, `get_stats`, ...) apart from mutating
+  (`remember`, `log_progress`, ...) and destructive (`undo_last_entry`) ones.
+
 ### Added — compaction-safe goal anchoring + per-session handoff documents
 
 Context compaction is the working-memory killer: when a client summarizes a
