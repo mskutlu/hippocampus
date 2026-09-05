@@ -34,7 +34,7 @@ def test_log_progress_boosts_semantic_match(hippo_env, monkeypatch):
     assert out["logged"] is True
 
     after = F.get(fid).confidence
-    assert after - before == pytest.approx(config.BOOST_DELTA)
+    assert after - before == pytest.approx(config.BOOST_DELTA * (1 - before))
     assert fid in out.get("auto_boosted_fragments", [])
 
 
@@ -62,7 +62,7 @@ def test_log_progress_no_explicit_id_still_boosts(hippo_env, monkeypatch):
 
     out = T.log_progress(kind="ask", content="How does acme-orders deploy to Docker Hub?")
     assert fid in out.get("auto_boosted_fragments", [])
-    assert F.get(fid).confidence - before == pytest.approx(config.BOOST_DELTA)
+    assert F.get(fid).confidence - before == pytest.approx(config.BOOST_DELTA * (1 - before))
 
 
 def test_log_progress_respects_disable(hippo_env, monkeypatch):

@@ -149,6 +149,7 @@
 <nav>
   <button data-tab="dashboard" class="active">Dashboard</button>
   <button data-tab="fragments">Fragments</button>
+  <button data-tab="triage">Triage</button>
   <button data-tab="graph">Graph</button>
   <button data-tab="working">Working</button>
   <button data-tab="feedback">Feedback</button>
@@ -198,6 +199,16 @@
         <button class="act" onclick="loadFragments()">Refresh</button>
       </div>
       <table id="frag-table" style="margin-top:12px;"><thead><tr><th>conf</th><th>acc</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-triage" hidden>
+    <div class="panel">
+      <h2>Triage — most accessed first</h2>
+      <div class="row">
+        <button class="act" onclick="loadTriage()">Refresh</button>
+      </div>
+      <table id="triage-table" style="margin-top:12px;"><thead><tr><th>acc</th><th>conf</th><th>pin</th><th>size</th><th>age</th><th>summary</th><th>actions</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 
@@ -318,6 +329,7 @@ document.querySelectorAll('nav button').forEach(btn => {
       document.getElementById(`tab-${t}`).hidden = t !== tab;
     });
     if (tab === 'fragments') loadFragments();
+    if (tab === 'triage') loadTriage();
     if (tab === 'graph') loadGraph();
     if (tab === 'working') loadProgress();
     if (tab === 'feedback') loadFeedback();
@@ -399,6 +411,32 @@ async function loadFragments() {
       <td>${pin}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="5"><em>no fragments</em></td></tr>';
+}
+
+async function loadTriage() {
+  const res = await api('/api/triage?limit=200');
+  const tbody = document.querySelector('#triage-table tbody');
+  const days = iso => iso ? Math.floor((Date.now() - Date.parse(iso)) / 86400000) + 'd' : '-';
+  tbody.innerHTML = res.fragments.map(f => `<tr>
+      <td>${f.accessed}</td>
+      <td>${f.confidence.toFixed(2)}</td>
+      <td>${f.pinned ? '📌' : ''}</td>
+      <td>${(f.size / 1024).toFixed(1)}k</td>
+      <td>${days(f.created_at)}</td>
+      <td onclick="openFragment('${f.id}')" style="cursor:pointer">${escapeHtml(f.summary || f.id)}</td>
+      <td>
+        ${f.pinned ? `<button class="act" onclick="triageAct('${f.id}','unpin')">Unpin</button>` : ''}
+        <button class="act" onclick="triageAct('${f.id}','mark')">Not useful</button>
+        <button class="act danger" onclick="triageAct('${f.id}','delete')">Forget</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="7"><em>no fragments</em></td></tr>';
+}
+
+async function triageAct(id, action) {
+  if (action === 'unpin') await api(`/api/fragments/${id}/unpin`, { method: 'POST' });
+  if (action === 'mark') await api(`/api/fragments/${id}/mark`, { method: 'POST', body: { useful: false, reason: 'triage' } });
+  if (action === 'delete') { if (!confirm('Delete this fragment permanently?')) return; await api(`/api/fragments/${id}`, { method: 'DELETE' }); }
+  loadTriage();
 }
 
 async function createFragment() {

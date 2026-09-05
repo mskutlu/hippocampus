@@ -79,8 +79,10 @@ def recall(
     limit: int = 5,
     min_confidence: float = 0.0,
     context_tag: str | None = None,
+    boost: bool = True,
 ) -> dict[str, Any]:
-    """Hybrid FTS + semantic search. Every returned hit is boosted.
+    """Hybrid FTS + semantic search. Every returned hit is boosted unless
+    `boost=False` (used by hook injection, which is not a real access).
 
     Candidates are fused with weighted Reciprocal Rank Fusion (RRF):
         final = (1 - semantic_weight) / (60 + fts_rank)
@@ -178,12 +180,15 @@ def recall(
         }
 
     # Boost all hits (biology) + associations
-    client = _client_name()
-    session_id = sessions.current_session_id(client)
     hit_ids = [f.id for f in hit_frags]
-    boosted = boost_dyn.boost_many(
-        hit_ids, context_tag=context_tag, session_id=session_id, client=client
-    )
+    if boost:
+        client = _client_name()
+        session_id = sessions.current_session_id(client)
+        boosted = boost_dyn.boost_many(
+            hit_ids, context_tag=context_tag, session_id=session_id, client=client
+        )
+    else:
+        boosted = hit_frags
 
     fragments_out: list[dict[str, Any]] = []
     for f in boosted:
@@ -280,6 +285,22 @@ def unpin(fragment_id: str) -> dict[str, Any]:
         return {"found": False, "fragment_id": fragment_id}
     feedback.log(fragment_id, "unpin")
     return {"found": True, "fragment": _as_dict(updated)}
+
+
+def mark(fragment_id: str, useful: bool, reason: str | None = None) -> dict[str, Any]:
+    """Explicit feedback. useful=True sets confidence to 1.0; False applies the negative delta."""
+    _ensure_bootstrapped()
+    client = _client_name()
+    session_id = sessions.current_session_id(client)
+    if useful:
+        updated = boost_dyn.mark_useful(fragment_id, session_id=session_id)
+    else:
+        updated = boost_dyn.apply_negative_feedback(
+            fragment_id, reason=reason or "not-useful", session_id=session_id
+        )
+    if updated is None:
+        return {"found": False, "fragment_id": fragment_id}
+    return {"found": True, "useful": useful, "fragment": _as_dict(updated)}
 
 
 def get_fragment(fragment_id: str, boost_on_read: bool = True) -> dict[str, Any]:
@@ -1087,32 +1108,55 @@ def _append_session_summary_to_wiki(
     }
 
 
+def _is_markup(text: str) -> bool:
+    return "<" in (text or "")
+
+
 def _derive_summary(entries: list[ledger_store.LedgerEntry]) -> str:
-    goal = next((e for e in entries if e.kind == "goal"), None)
+    goal = next((e for e in entries if e.kind == "goal" and not _is_markup(e.content)), None)
     if goal:
         return f"Session summary: {goal.content[:120]}"
-    first_ask = next((e for e in entries if e.kind == "ask"), None)
+    first_ask = next((e for e in entries if e.kind == "ask" and not _is_markup(e.content)), None)
     if first_ask:
         return f"Session summary: {first_ask.content[:120]}"
     return "Session summary"
 
 
+_DISTILL_SECTIONS: tuple[tuple[str, int | None], ...] = (
+    ("goal", 1),
+    ("decision", None),
+    ("blocker", None),
+    ("done", 5),
+    ("next", 3),
+)
+
+
 def _render_ledger_as_fragment(entries: list[ledger_store.LedgerEntry], *, explicit_summary: str | None) -> str:
+    """Distil a ledger into a bounded fragment: goal, decisions, blockers,
+    the last dones and nexts. Asks and any markup lines are dropped (V11)."""
+    max_chars = int(config.get_setting("distill_max_chars") or 0)
     lines: list[str] = []
-    if explicit_summary:
-        lines.append(explicit_summary)
+    if explicit_summary and not _is_markup(explicit_summary):
+        lines.append(explicit_summary.strip())
         lines.append("")
     by_kind: dict[str, list[str]] = {}
     for e in entries:
-        by_kind.setdefault(e.kind, []).append(f"- {e.content}")
-    for kind in ("goal", "decision", "done", "blocker", "next", "ask", "note"):
+        if _is_markup(e.content):
+            continue
+        by_kind.setdefault(e.kind, []).append(f"- {' '.join(e.content.split())}")
+    for kind, keep_last in _DISTILL_SECTIONS:
         items = by_kind.get(kind, [])
         if not items:
             continue
+        if keep_last is not None:
+            items = items[-keep_last:]
         lines.append(f"**{kind.title()}**")
         lines.extend(items)
         lines.append("")
-    return "\n".join(lines).strip()
+    text = "\n".join(lines).strip()
+    if max_chars and len(text) > max_chars:
+        text = text[: max_chars - 1].rstrip() + "…"
+    return text
 
 
 def _extract_lessons(entries: list[ledger_store.LedgerEntry], transcript_entries: Sequence[Any]) -> list[str]:

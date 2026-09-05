@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Changed — V11 Phase 1: memory quality (plan: `plans/v11/`)
+
+An audit of a 5-month production database (1308 fragments, 152 MB) found the
+injected top-N dominated by hook markup and a saturated confidence
+distribution. Baseline numbers are recorded in `plans/v11/prd-shared-memory.md`.
+
+- `autoremember` ignores hook envelopes (`<task-notification>`,
+  `<system-reminder>`, prompts starting with `<`) via the new
+  `autoremember_ignore_patterns` setting, and rejects trigger sentences over
+  `autoremember_max_sentence_chars` (300) or containing tags. Auto-remembered
+  fragments no longer carry `client:` / `trigger:` tags.
+- Boost is asymptotic: `delta = BOOST_DELTA * (1 - confidence)`. Only `pin`
+  and the new `mark(useful=true)` reach 1.0.
+- Hook injection no longer counts as an access. `recall(boost=False)` is used
+  by the hook payload, injected ids are recorded in `session_accesses.via`,
+  and a later recall of an already-injected fragment in the same session is
+  not boosted. Migration `009_quality.sql` adds the column and a
+  `fragment_tombstones` table filled on delete (needed by V11 sync).
+- `top_n` breaks score ties by most recent access instead of raw access count.
+- Session distillation is bounded: goal, decisions, blockers, last 5 dones,
+  last 3 nexts; asks and markup lines dropped; capped at `distill_max_chars`
+  (4000).
+- Pipeline tags (`log_progress_auto:*`, `log_progress:*`, `trigger:*`,
+  `client:*`, `cluster:*`) are dropped at write time.
+- Decay writes one `decay-cycle` feedback row per cycle instead of one per
+  fragment.
+- New MCP tool `mark(fragment_id, useful)` and CLI `hippo mark`.
+- New CLI `hippo audit` (exit 1 on breach), `hippo purge-noise` (backs up,
+  deletes markup fragments, re-renders oversized session summaries), and
+  `hippo maintain` (archive + session cleanup + feedback prune + reindex +
+  VACUUM). The daily launchd/cron job now runs `maintain` instead of `archive`.
+- `cleanup-sessions` also deletes ended sessions older than
+  `session_cleanup_age_hours` (24) whose only trace is injection accesses.
+- Web UI: Triage tab (most accessed first; unpin / not useful / forget) and
+  `/api/triage`, `/api/fragments/{id}/mark`.
+
+Fixture run on a copy of the production database: 78 noise fragments removed,
+123 oversized summaries re-rendered or cut, sessions 62,916 → 2,259, embedding
+coverage 0.89 → 1.00, 52 MB reclaimed by VACUUM.
+
 ### Fixed — correct MCP tool error/annotation reporting
 
 - Pinned `mcp>=1.27,<2` in `pyproject.toml`. PyPI's `mcp` now defaults to SDK

@@ -110,6 +110,23 @@ TOOL_SPECS: list[Tool] = [
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
     ),
     Tool(
+        name="mark",
+        description=(
+            "Explicit feedback on a recalled fragment. useful=true sets confidence to 1.0 "
+            "(the only way past the asymptotic boost); useful=false applies the negative delta."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "fragment_id": {"type": "string"},
+                "useful": {"type": "boolean"},
+                "reason": {"type": "string"},
+            },
+            "required": ["fragment_id", "useful"],
+        },
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    ),
+    Tool(
         name="pin",
         description="Mark a fragment as pinned so it never decays.",
         inputSchema={
@@ -425,6 +442,7 @@ TOOL_DISPATCH = {
     "recall": T.recall,
     "remember": T.remember,
     "forget": T.forget,
+    "mark": T.mark,
     "pin": T.pin,
     "unpin": T.unpin,
     "get_fragment": T.get_fragment,

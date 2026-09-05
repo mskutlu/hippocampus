@@ -27,6 +27,18 @@ def log(
         )
 
 
+def prune(days: int) -> int:
+    """Delete feedback rows older than `days`. Returns rows removed."""
+    if days < 1:
+        return 0
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM feedback_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)",
+            (f"-{int(days)} days",),
+        )
+        return cur.rowcount
+
+
 def recent(limit: int = 50) -> list[dict]:
     with get_ro_conn() as conn:
         rows = conn.execute(

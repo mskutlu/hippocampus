@@ -334,17 +334,29 @@ def current_session_id(
     raise RuntimeError(f"No active session for client={client_name!r} session_key={key!r}")
 
 
-def log_access(session_id: str, fragment_id: str) -> None:
+def log_access(session_id: str, fragment_id: str, via: str = "recall") -> None:
+    """Record an access. `via='inject'` never overwrites a real recall."""
     now = _now()
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO session_accesses (session_id, fragment_id, accessed_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(session_id, fragment_id) DO UPDATE SET accessed_at = excluded.accessed_at
+            INSERT INTO session_accesses (session_id, fragment_id, accessed_at, via)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(session_id, fragment_id) DO UPDATE SET
+                accessed_at = excluded.accessed_at,
+                via = CASE WHEN session_accesses.via = 'recall' THEN 'recall' ELSE excluded.via END
             """,
-            (session_id, fragment_id, now),
+            (session_id, fragment_id, now, via),
         )
+
+
+def injected_fragment_ids(session_id: str) -> set[str]:
+    with get_ro_conn() as conn:
+        rows = conn.execute(
+            "SELECT fragment_id FROM session_accesses WHERE session_id = ? AND via = 'inject'",
+            (session_id,),
+        ).fetchall()
+    return {r["fragment_id"] for r in rows}
 
 
 def auto_close_stale(hours: int | None = None) -> int:

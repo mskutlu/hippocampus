@@ -43,6 +43,20 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+PIPELINE_TAG_PREFIXES = ("log_progress_auto:", "log_progress:", "trigger:", "client:", "cluster:")
+
+
+def clean_tags(tags: Iterable[str]) -> list[str]:
+    """Drop machine tags that describe the pipeline, not the knowledge (V11)."""
+    out: list[str] = []
+    for t in tags:
+        t = (t or "").strip()
+        if not t or t.startswith(PIPELINE_TAG_PREFIXES):
+            continue
+        out.append(t)
+    return out
+
+
 @dataclass
 class Fragment:
     id: str
@@ -141,12 +155,13 @@ def create(
     # Canonicalize tags BEFORE opening the write transaction so the read
     # query against fragment_tags doesn't fight for the write lock.
     canonical_tags: list[str] = []
+    tags = clean_tags(tags)
     if tags:
         try:
             from hippocampus.storage import tag_canonical
-            canonical_tags = tag_canonical.canonicalize([t.strip() for t in tags if t.strip()])
+            canonical_tags = tag_canonical.canonicalize(tags)
         except Exception:
-            canonical_tags = [t.strip() for t in tags if t.strip()]
+            canonical_tags = list(tags)
 
     with get_conn() as conn:
         conn.execute(
@@ -230,10 +245,11 @@ def update_fields(
         if sets:
             params.append(fragment_id)
             conn.execute(f"UPDATE fragments SET {', '.join(sets)} WHERE id = ?", params)
+        add_tags = clean_tags(add_tags)
         if add_tags:
             conn.executemany(
                 "INSERT OR IGNORE INTO fragment_tags(fragment_id, tag) VALUES (?, ?)",
-                [(fragment_id, t.strip()) for t in add_tags if t.strip()],
+                [(fragment_id, t) for t in add_tags],
             )
         if remove_tags:
             conn.executemany(

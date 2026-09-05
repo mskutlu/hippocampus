@@ -59,7 +59,7 @@ def top_n(limit: int | None = None, min_confidence: float = 0.0) -> list[frag_st
     pool = frag_store.list_all(min_confidence=min_confidence, limit=max(200, n * 4))
     scored = [(ranked_score(f, now), f) for f in pool]
 
-    # Score first. Pinned protects from decay and adds a small configurable
-    # bonus, but no longer dominates the whole injection list.
-    scored.sort(key=lambda t: (-t[0], -t[1].accessed, not t[1].pinned))
+    # Stable two-pass sort: newest access breaks score ties (V11), then score.
+    scored.sort(key=lambda t: t[1].last_accessed_at or "", reverse=True)
+    scored.sort(key=lambda t: (-t[0], not t[1].pinned))
     return [f for _, f in scored[:n]]
