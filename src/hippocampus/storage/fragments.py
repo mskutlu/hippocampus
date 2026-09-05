@@ -262,8 +262,14 @@ def update_fields(
         sets.append("below_threshold_since = ?")
         params.append(below_threshold_since)
 
-    sets.append("updated_at = ?")
-    params.append(_utc_now())
+    # updated_at tracks content edits only; boosts/decay leave it alone so the
+    # sync merge rule "newer updated_at wins" orders real edits (V11).
+    content_edit = any(
+        v is not None for v in (content, summary, pinned)
+    ) or project is not False or bool(add_tags) or bool(remove_tags)
+    if content_edit:
+        sets.append("updated_at = ?")
+        params.append(_utc_now())
 
     with get_conn() as conn:
         if sets:

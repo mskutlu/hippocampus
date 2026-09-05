@@ -1,0 +1,13 @@
+[Unit]
+Description=Hippocampus sync oplog server
+After=network-online.target
+
+[Service]
+Environment=HIPPOCAMPUS_HOME=__HIPPO_HOME__
+Environment=HIPPOCAMPUS_VAULT=__HIPPO_VAULT__
+ExecStart=__HIPPO_BIN__ sync serve --host __SYNC_HOST__ --port __SYNC_PORT__
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

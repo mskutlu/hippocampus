@@ -176,7 +176,40 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
 
 Anything that matches no rule is **global** and visible in every project.
 
-**Devices.** See the V11 sync section (Phase 3) once shipped.
+**Devices.** Long-term memory (fragments, tags, embeddings, associations,
+pins, forgets, and `projects.json`) syncs between your devices through one
+small server you host. Working memory, handoffs, and transcripts stay per
+device by design.
+
+1. On one always-on machine (or a small VPS), start the server and note the
+   printed token. Bind it to a Tailscale address or put TLS in front; the
+   server itself speaks plain HTTP.
+   ```bash
+   bash scripts/install.sh --sync-server --sync-host=0.0.0.0 --sync-port=7879
+   ```
+2. On every device, point at it:
+   ```bash
+   hippo config set sync_url http://<server-host>:7879
+   hippo config set sync_token <token>
+   hippo config set sync_enabled true
+   ```
+3. On a device that already has memory, clean it once before the first push:
+   ```bash
+   hippo purge-noise --commit
+   hippo project backfill --commit
+   ```
+4. Run the first sync by hand and check it:
+   ```bash
+   hippo sync
+   hippo doctor        # shows device id, server, last_ok, pending ops
+   hippo project detect .
+   ```
+5. Leave it. The 10-minute `hippo inject` job pushes and pulls from then on.
+   A device that is offline simply catches up on its next tick.
+
+Merge rules are pure and tested (`hippocampus/sync/merge.py`): the newer
+edit wins for content, pins and project; access counts and confidence take
+the max; deletes win unless you edited the fragment after the delete.
 
 ## Updating an existing install
 
@@ -493,6 +526,11 @@ hippo project list
 hippo project add acme --remote 'gitlab.com/acme/*' --path '~/work/acme-*' --alias customer-a
 hippo project detect ~/work/acme-orders
 hippo project backfill --dry-run   # assign projects to existing fragments from session paths + tags
+
+# Device sync (V11) — see "Multiple devices and projects"
+hippo sync                      # push + pull now
+hippo sync status
+hippo sync serve --port 7879    # run the oplog server (web extra)
 
 # Memory health (V11)
 hippo audit                     # noise, saturation, coverage, stale sessions; exit 1 on breach

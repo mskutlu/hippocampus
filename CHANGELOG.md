@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — V11 Phase 3: device sync via a self-hosted endpoint (plan: `plans/v11/`)
+
+- `hippo sync serve` runs a small FastAPI oplog server (`sync.db`, one static
+  bearer token from `hippo sync token`). Endpoints: `/v1/health`, `/v1/push`,
+  `/v1/pull?since=&device=` (500 ops per page, excludes the caller's own
+  ops), `/v1/config`. Plain HTTP; run it over Tailscale or behind TLS.
+  `scripts/install.sh --sync-server` installs it as a launchd agent (macOS)
+  or systemd user unit (Linux) and prints the enrollment commands.
+- `hippo sync` pushes fragments (row, tags, embedding), associations,
+  tombstones, and `projects.json`, then pulls other devices' ops and merges
+  them with pure rules (`hippocampus.sync.merge`): newer `updated_at` wins for
+  content/summary/project/pinned; `accessed`, `confidence`,
+  `last_accessed_at` take the max; tags and rules union; a tombstone deletes
+  unless a local edit is newer. Embeddings are accepted when the model
+  matches, else left to the daily reindex. Migration `011_sync.sql` adds
+  `sync_state`; `~/.hippocampus/device_id` identifies the device.
+- `updated_at` on fragments now changes only on content, summary, pinned,
+  project, or tag edits. Boosts and decay touch `last_accessed_at` and
+  `confidence` only, so the merge rule orders real edits.
+- Sync runs only from `hippo sync` or, when `sync_enabled`, at the end of the
+  10-minute `hippo inject` job (`--no-sync` opts out). No MCP tool, hook, or
+  web route imports the sync client. `hippo sync status` and `hippo doctor`
+  report device id, server, last success, pending ops, and last error.
+  Settings: `sync_url`, `sync_token`, `sync_enabled`, `sync_server_token`.
+- Measured after Phases 1-3 on the production database (1230 fragments,
+  semantic on): `recall` p50 280 ms, p95 372 ms over 20 queries. The sync
+  client is not on that path.
+
 ### Added — V11 Phase 2: project scoping (plan: `plans/v11/`)
 
 - `~/.hippocampus/projects.json` maps git remotes, path globs, and tag aliases
