@@ -46,7 +46,7 @@ project scoping second so synced rows already carry a project, sync last.
 
 ## 3. User Stories
 
-- As the owner, when I `cd` into a acme repo on any device, the injected
+- As the owner, when I `cd` into an acme repo on any device, the injected
   memory shows acme fragments and my global rules, nothing from other companies.
 - As the owner, when I `remember` something on the laptop, it is available in
   recall on the desktop the next time I open a session there.
