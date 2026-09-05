@@ -75,7 +75,7 @@ PRD: [prd-shared-memory.md](./prd-shared-memory.md)
   - [x] 1.14 `hippo purge-noise [--dry-run]`: backup, delete fragments matching 1.1 patterns, re-render oversized session summaries from their session when it still exists, else cut at 4000 chars
   - [x] 1.15 Tests: `test_autoremember_filters.py`, `test_boost_dynamics.py`, `test_distill_cap.py`, `test_audit.py`
   - [x] 1.16 Run `purge-noise --dry-run` then for real on the fixture copy; confirm `hippo audit` reports 0 noise fragments
-  - [ ] 1.17 Re-run `hippo install-hooks` and reload launchd agents; verify a Monitor notification in a live Claude Code session creates no fragment
+  - [x] 1.17 Re-run `hippo install-hooks` and reload launchd agents; verify a Monitor notification in a live Claude Code session creates no fragment
   - [x] 1.18 Web UI triage view: `/triage` route sorted by `accessed` desc, columns confidence, pinned, project, size, age; row actions unpin, forget, mark not useful calling the same functions as the MCP tools
 
 - [x] 2.0 Phase 2 — Project scoping
@@ -109,8 +109,8 @@ PRD: [prd-shared-memory.md](./prd-shared-memory.md)
   - [x] 3.12 Verify hot path: `grep` that no module under `mcp/`, `web/`, or hooks imports `sync.client`; re-measure `recall` p95 against baseline
 
 - [ ] 4.0 Phase 4 — Rollout and docs
-  - [ ] 4.1 Choose the server host (desktop over Tailscale or VPS); install with `install.sh --sync-server`; confirm `GET /v1/health` from a second device
-  - [ ] 4.2 Enroll the primary device first: `purge-noise`, `project backfill`, `hippo config set sync_url/sync_token/sync_enabled`, `hippo sync`; confirm op count on the server equals fragment count
+  - [x] 4.1 Choose the server host (desktop over Tailscale or VPS); install with `install.sh --sync-server`; confirm `GET /v1/health` from a second device
+  - [x] 4.2 Enroll the primary device first: `purge-noise`, `project backfill`, `hippo config set sync_url/sync_token/sync_enabled`, `hippo sync`; confirm op count on the server equals fragment count
   - [ ] 4.3 Enroll each remaining device: same steps; after first pull run `hippo audit` and spot-check 5 fragments exist on both sides
   - [ ] 4.4 Open a session in one project repo on two devices; confirm the hook payload shows only that project plus global fragments
   - [x] 4.5 RUNBOOK: server install, enrollment, first sync from richest DB, recovery from a bad merge (`hippo restore` + `sync_state` reset)
