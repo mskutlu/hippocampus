@@ -10,6 +10,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SYNC_SERVER=0
+SYNC_HOST="${HIPPOCAMPUS_SYNC_HOST:-0.0.0.0}"
+SYNC_PORT="${HIPPOCAMPUS_SYNC_PORT:-7879}"
+for arg in "$@"; do
+    case "$arg" in
+        --sync-server) SYNC_SERVER=1 ;;
+        --sync-host=*) SYNC_HOST="${arg#*=}" ;;
+        --sync-port=*) SYNC_PORT="${arg#*=}" ;;
+    esac
+done
 HIPPO_HOME="${HIPPOCAMPUS_HOME:-$HOME/.hippocampus}"
 HIPPO_VAULT="${HIPPOCAMPUS_VAULT:-$HOME/hippocampus-vault}"
 LOG_DIR="$HIPPO_HOME/logs"
@@ -155,6 +165,58 @@ HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" reg
 
 # First injection (all platforms)
 HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" inject --commit >/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 5b. Optional: sync oplog server on this machine (--sync-server)
+# ---------------------------------------------------------------------------
+if [[ "$SYNC_SERVER" == "1" ]]; then
+    echo "==> [5b] Installing sync server (host=$SYNC_HOST port=$SYNC_PORT)..."
+    uv pip install -e '.[web]' --quiet
+    SYNC_TOKEN="$(HIPPOCAMPUS_HOME="$HIPPO_HOME" "$HIPPO_BIN" sync token --show 2>/dev/null || true)"
+    if [[ -z "$SYNC_TOKEN" ]]; then
+        SYNC_TOKEN="$(HIPPOCAMPUS_HOME="$HIPPO_HOME" "$HIPPO_BIN" sync token)"
+    fi
+    case "$PLATFORM" in
+        macos)
+            dst="$HOME/Library/LaunchAgents/com.hippocampus.sync-server.plist"
+            sed \
+                -e "s|__HIPPO_BIN__|$HIPPO_BIN|g" \
+                -e "s|__HIPPO_HOME__|$HIPPO_HOME|g" \
+                -e "s|__HIPPO_VAULT__|$HIPPO_VAULT|g" \
+                -e "s|__HIPPO_LOG_DIR__|$LOG_DIR|g" \
+                -e "s|__SYNC_HOST__|$SYNC_HOST|g" \
+                -e "s|__SYNC_PORT__|$SYNC_PORT|g" \
+                "$REPO_ROOT/scripts/com.hippocampus.sync-server.plist.template" > "$dst"
+            launchctl bootout "gui/$(id -u)/com.hippocampus.sync-server" 2>/dev/null || true
+            launchctl bootstrap "gui/$(id -u)" "$dst"
+            echo "    loaded com.hippocampus.sync-server"
+            ;;
+        linux)
+            mkdir -p "$HOME/.config/systemd/user"
+            dst="$HOME/.config/systemd/user/hippocampus-sync.service"
+            sed \
+                -e "s|__HIPPO_BIN__|$HIPPO_BIN|g" \
+                -e "s|__HIPPO_HOME__|$HIPPO_HOME|g" \
+                -e "s|__HIPPO_VAULT__|$HIPPO_VAULT|g" \
+                -e "s|__SYNC_HOST__|$SYNC_HOST|g" \
+                -e "s|__SYNC_PORT__|$SYNC_PORT|g" \
+                "$REPO_ROOT/scripts/hippocampus-sync.service.template" > "$dst"
+            systemctl --user daemon-reload && systemctl --user enable --now hippocampus-sync.service \
+                && echo "    enabled hippocampus-sync.service" \
+                || echo "    systemd --user unavailable; run: $HIPPO_BIN sync serve --host $SYNC_HOST --port $SYNC_PORT"
+            ;;
+        *)
+            echo "    No service manager on $PLATFORM; run: $HIPPO_BIN sync serve --host $SYNC_HOST --port $SYNC_PORT"
+            ;;
+    esac
+    echo ""
+    echo "    Sync server token (set on every device):"
+    echo "      hippo config set sync_url http://<this-host>:$SYNC_PORT"
+    echo "      hippo config set sync_token $SYNC_TOKEN"
+    echo "      hippo config set sync_enabled true"
+    echo "      hippo sync"
+    echo ""
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Doctor

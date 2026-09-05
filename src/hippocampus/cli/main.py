@@ -182,6 +182,24 @@ def doctor() -> None:
     except Exception as e:  # noqa: BLE001
         warn.append(f"hooks: status failed ({e})")
 
+    # Device sync (V11)
+    try:
+        from hippocampus.sync import client as sync_client
+
+        st = sync_client.status()
+        if st["enabled"]:
+            line = (
+                f"sync: device={st['device']} url={st['url']} last_ok={st['last_ok_at'] or 'never'} "
+                f"pending={st['pending_ops']}"
+            )
+            (warn if (st["last_error"] or not st["last_ok_at"]) else ok).append(
+                line + (f" last_error={st['last_error']}" if st["last_error"] else "")
+            )
+        else:
+            ok.append("sync: disabled (hippo config set sync_enabled true after setting sync_url/sync_token)")
+    except Exception as e:  # noqa: BLE001
+        warn.append(f"sync: status failed ({e})")
+
     for line in ok:
         click.echo(click.style("OK  ", fg="green") + line)
     for line in warn:
@@ -408,6 +426,61 @@ def mark_cmd(fragment_id: str, useful: bool, reason: Optional[str]) -> None:
     click.echo(json.dumps(tools.mark(fragment_id, useful=useful, reason=reason), indent=2, ensure_ascii=False))
 
 
+@cli.group(name="sync", invoke_without_command=True)
+@click.option("--quiet", is_flag=True, help="Exit 0 on network errors (for the periodic job)")
+@click.pass_context
+def sync_group(ctx: click.Context, quiet: bool) -> None:
+    """Push local memory to the sync server and pull other devices' changes (V11)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _bootstrap()
+    from hippocampus.sync import client as sync_client
+
+    try:
+        out = sync_client.sync(quiet=quiet)
+    except sync_client.SyncError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(out, indent=2))
+    if not out.get("ok") and not quiet:
+        sys.exit(1)
+
+
+@sync_group.command("status")
+def sync_status_cmd() -> None:
+    """Device id, server, last successful sync, pending ops, last error."""
+    _bootstrap()
+    from hippocampus.sync import client as sync_client
+
+    click.echo(json.dumps(sync_client.status(), indent=2))
+
+
+@sync_group.command("token")
+@click.option("--show", is_flag=True, help="Print the existing server token instead of generating")
+def sync_token_cmd(show: bool) -> None:
+    """Generate (or show) the server-side bearer token."""
+    _bootstrap()
+    from hippocampus.sync import server as sync_server
+
+    if show:
+        click.echo(sync_server.server_token())
+        return
+    click.echo(sync_server.generate_token())
+
+
+@sync_group.command("serve")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=7879, show_default=True)
+def sync_serve_cmd(host: str, port: int) -> None:
+    """Run the sync oplog server (needs the `web` extra)."""
+    _bootstrap()
+    from hippocampus.sync import server as sync_server
+
+    try:
+        sync_server.run(host=host, port=port)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @cli.group(name="project")
 def project_group() -> None:
     """Project scoping: map repos/paths to a project name (V11)."""
@@ -553,9 +626,22 @@ def restore_cmd(backup_path: Path) -> None:
 @click.option("--limit", default=None, type=int, help=f"top-N (default: {config.TOP_N_DEFAULT})")
 @click.option("--only", multiple=True, help="Only inject into these clients (repeatable)")
 @click.option("--dry-run/--commit", default=False)
-def inject(limit: Optional[int], only: tuple, dry_run: bool) -> None:
-    """Regenerate the top-N block AND the working-memory block in every client."""
+@click.option("--no-sync", is_flag=True, help="Skip the device sync that follows inject when sync_enabled")
+def inject(limit: Optional[int], only: tuple, dry_run: bool, no_sync: bool) -> None:
+    """Regenerate the top-N block AND the working-memory block in every client.
+
+    When `sync_enabled`, also pushes/pulls device sync afterwards (the 10-minute
+    inject job is the only scheduled sync trigger; MCP tools never sync).
+    """
     _bootstrap()
+    if bool(config.get_setting("sync_enabled")) and not dry_run and not no_sync:
+        try:
+            from hippocampus.sync import client as sync_client
+
+            out = sync_client.sync(quiet=True)
+            click.echo("sync: " + ("ok" if out.get("ok") else f"failed ({out.get('error')})"))
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"sync: failed ({exc})")
     from hippocampus.clients.injector import (
         format_injection_block,
         format_working_block,

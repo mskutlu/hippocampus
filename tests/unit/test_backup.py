@@ -122,5 +122,5 @@ def test_integrity_migrations_upgrade_existing_database(hippo_env, tmp_path, mon
     assert total_sessions == 1
     assert "session_id" in columns
     assert foreign_keys == []
-    assert versions == set(range(1, 11))
+    assert versions == {int(m.name.split("_", 1)[0]) for m in all_migrations.glob("*.sql")}
     assert audit_rows == 1

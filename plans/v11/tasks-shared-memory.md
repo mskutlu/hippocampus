@@ -94,25 +94,25 @@ PRD: [prd-shared-memory.md](./prd-shared-memory.md)
   - [x] 2.13 Draft `projects.json` for the owner's 4 to 5 projects from the audit's tag list; owner confirms names and repos
   - [ ] 2.14 Run backfill on the fixture copy; confirm > 80 % assigned; then run on the live primary DB after `hippo backup`
 
-- [ ] 3.0 Phase 3 — Device sync via self-hosted endpoint
-  - [ ] 3.1 `sync/merge.py`: `merge_fragment(local, remote) -> merged`, `apply_tombstone(local, tombstone) -> bool`, `merge_association(a, b)`; pure functions over dicts per FR28
-  - [ ] 3.2 Migration `011_sync.sql`: `sync_state` table
-  - [ ] 3.3 `sync/client.py`: device id file (ULID, mode 0600), watermark from `max(updated_at, last_accessed_at)`, `collect_ops()` producing fragment, association, tombstone, and config ops
-  - [ ] 3.4 `sync/client.py`: `push()` in batches of 200 with `httpx`; `pull()` loops until `next_seq` catches up; apply through `merge.py` inside short transactions; advance `last_pull_seq` per batch
-  - [ ] 3.5 Embedding handling on pull: accept blob if model name matches the local setting, else drop and leave to reindex
-  - [ ] 3.6 `sync/server.py`: FastAPI app, bearer token middleware, `sync.db` oplog, endpoints from FR22; `pull` excludes the caller's own device ops
-  - [ ] 3.7 CLI `hippo sync [--quiet]`, `hippo sync serve [--port]`, `hippo sync status`; settings `sync_url`, `sync_token`, `sync_enabled`
-  - [ ] 3.8 Inject launchd and cron templates append `&& hippo sync --quiet` only when `sync_enabled`; `--quiet` exits 0 on network error and records `last_error`
-  - [ ] 3.9 `hippo doctor` and `hippo audit` show device id, server, last ok sync, pending ops, last error, lag
-  - [ ] 3.10 `scripts/install.sh --sync-server`: launchd plist on macOS, systemd unit on Linux, token generated into `~/.hippocampus/config.json` mode 0600
-  - [ ] 3.11 Tests: `test_sync_merge.py` (each FR28 rule, commutativity of merge for two devices, tombstone vs newer update), `test_sync_roundtrip.py` (device A remembers, B pulls; B pins, A sees pin; A forgets, B deletes; offline push retries)
-  - [ ] 3.12 Verify hot path: `grep` that no module under `mcp/`, `web/`, or hooks imports `sync.client`; re-measure `recall` p95 against baseline
+- [x] 3.0 Phase 3 — Device sync via self-hosted endpoint
+  - [x] 3.1 `sync/merge.py`: `merge_fragment(local, remote) -> merged`, `apply_tombstone(local, tombstone) -> bool`, `merge_association(a, b)`; pure functions over dicts per FR28
+  - [x] 3.2 Migration `011_sync.sql`: `sync_state` table
+  - [x] 3.3 `sync/client.py`: device id file (ULID, mode 0600), watermark from `max(updated_at, last_accessed_at)`, `collect_ops()` producing fragment, association, tombstone, and config ops
+  - [x] 3.4 `sync/client.py`: `push()` in batches of 200 with `httpx`; `pull()` loops until `next_seq` catches up; apply through `merge.py` inside short transactions; advance `last_pull_seq` per batch
+  - [x] 3.5 Embedding handling on pull: accept blob if model name matches the local setting, else drop and leave to reindex
+  - [x] 3.6 `sync/server.py`: FastAPI app, bearer token middleware, `sync.db` oplog, endpoints from FR22; `pull` excludes the caller's own device ops
+  - [x] 3.7 CLI `hippo sync [--quiet]`, `hippo sync serve [--port]`, `hippo sync status`; settings `sync_url`, `sync_token`, `sync_enabled`
+  - [x] 3.8 Inject launchd and cron templates append `&& hippo sync --quiet` only when `sync_enabled`; `--quiet` exits 0 on network error and records `last_error`
+  - [x] 3.9 `hippo doctor` and `hippo audit` show device id, server, last ok sync, pending ops, last error, lag
+  - [x] 3.10 `scripts/install.sh --sync-server`: launchd plist on macOS, systemd unit on Linux, token generated into `~/.hippocampus/config.json` mode 0600
+  - [x] 3.11 Tests: `test_sync_merge.py` (each FR28 rule, commutativity of merge for two devices, tombstone vs newer update), `test_sync_roundtrip.py` (device A remembers, B pulls; B pins, A sees pin; A forgets, B deletes; offline push retries)
+  - [x] 3.12 Verify hot path: `grep` that no module under `mcp/`, `web/`, or hooks imports `sync.client`; re-measure `recall` p95 against baseline
 
 - [ ] 4.0 Phase 4 — Rollout and docs
   - [ ] 4.1 Choose the server host (desktop over Tailscale or VPS); install with `install.sh --sync-server`; confirm `GET /v1/health` from a second device
   - [ ] 4.2 Enroll the primary device first: `purge-noise`, `project backfill`, `hippo config set sync_url/sync_token/sync_enabled`, `hippo sync`; confirm op count on the server equals fragment count
   - [ ] 4.3 Enroll each remaining device: same steps; after first pull run `hippo audit` and spot-check 5 fragments exist on both sides
   - [ ] 4.4 Open a session in one project repo on two devices; confirm the hook payload shows only that project plus global fragments
-  - [ ] 4.5 RUNBOOK: server install, enrollment, first sync from richest DB, recovery from a bad merge (`hippo restore` + `sync_state` reset)
-  - [ ] 4.6 README section "Multiple devices and projects"; CHANGELOG `1.8.0` with before and after numbers from 0.3 and 3.12
+  - [x] 4.5 RUNBOOK: server install, enrollment, first sync from richest DB, recovery from a bad merge (`hippo restore` + `sync_state` reset)
+  - [x] 4.6 README section "Multiple devices and projects"; CHANGELOG `1.8.0` with before and after numbers from 0.3 and 3.12
   - [ ] 4.7 Update `plans/README.md` row for v11

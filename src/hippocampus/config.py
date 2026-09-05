@@ -154,6 +154,10 @@ _DEFAULTS: dict[str, Any] = {
     "distill_max_chars": 4000,             # V11: cap on session-summary fragments
     "feedback_retention_days": 90,         # V11: daily prune of feedback_log
     "session_cleanup_age_hours": 24,       # V11: delete empty sessions older than this
+    "sync_enabled": False,                 # V11: push/pull after each `hippo inject`
+    "sync_url": None,                      # e.g. http://desktop.tailnet:7879
+    "sync_token": None,                    # bearer token shared with the server
+    "sync_server_token": None,             # server side; `hippo sync token` generates it
     "inferred_negation_enabled": True,     # auto-forget on negation
     "inferred_negation_window_turns": 2,   # only consider last N turns for the cite-target
     "observe_default_confidence": 0.30,    # hippo observe starts fragments here (vs 0.50)

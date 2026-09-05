@@ -269,3 +269,52 @@ tail ~/.hippocampus/logs/mcp-*.log
 - Rules files are backed up once on first Hippocampus write.
 - MCP config files are backed up on every write (timestamped `.bak`).
 - Archive only moves mirror files — never permanently deletes data.
+
+
+## Device sync (V11)
+
+### Server
+
+- Install on the always-on host: `bash scripts/install.sh --sync-server`.
+  The token is stored as `sync_server_token` in that host's
+  `~/.hippocampus/config.json` (mode 0600); `hippo sync token --show` prints it.
+- The oplog is `~/.hippocampus/sync.db` (override with `HIPPOCAMPUS_SYNC_DB`).
+  It is append-only; back it up like any SQLite file. There is no compaction
+  in V11: a full re-enrollment replays every op, which is fine at fragment
+  volumes.
+- Health: `curl http://<host>:7879/v1/health` (no auth) returns `head_seq`
+  and the number of devices seen.
+- Logs: `~/.hippocampus/logs/sync-server.*.log` (launchd) or
+  `journalctl --user -u hippocampus-sync` (systemd).
+
+### Enrolling a device
+
+1. `hippo config set sync_url http://<host>:7879`, `hippo config set sync_token <token>`.
+2. If the device already has memory: `hippo purge-noise --commit` and
+   `hippo project backfill --commit`.
+3. `hippo sync` by hand. The first push sends every fragment (one op each);
+   the first pull replays the server log. Both run in 200-op batches.
+4. `hippo config set sync_enabled true`; from now on `hippo inject` syncs.
+5. `hippo doctor` must show `sync: ... last_ok=<time> pending=0`.
+
+Enroll the device with the richest memory first so its history is the base
+everyone else pulls.
+
+### Recovering from a bad merge
+
+1. `hippo restore ~/.hippocampus/backups/<file>.db` on the affected device
+   (`hippo backup` runs before every purge and migration).
+2. Reset that device's sync cursors so it replays the server log against the
+   restored database:
+   ```bash
+   sqlite3 ~/.hippocampus/hippocampus.db "DELETE FROM sync_state WHERE key IN ('last_pull_seq','last_push_watermark')"
+   hippo sync
+   ```
+   Replaying is idempotent: ops already applied merge to no change.
+3. If the server log itself is wrong, stop the server, move `sync.db` aside,
+   start it again, and re-enroll devices from the healthiest one.
+
+### What is never synced
+
+Sessions, ledgers, handoffs, transcripts, wiki tables, backups, and the
+embedding model cache. These are device-local by design.
