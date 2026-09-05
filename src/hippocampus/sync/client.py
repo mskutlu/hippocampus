@@ -52,6 +52,29 @@ def set_state(key: str, value: str | None) -> None:
         )
 
 
+def _frag_sig(row: dict, emb_b64: str | None) -> str:
+    """Change signature used to suppress echoing rows that arrived via pull."""
+    import hashlib
+
+    emb = hashlib.sha1(emb_b64.encode("ascii")).hexdigest()[:8] if emb_b64 else ""
+    return f"{row.get('updated_at') or ''}|{row.get('last_accessed_at') or ''}|{row.get('accessed') or 0}|{row.get('confidence') or 0}|{emb}"
+
+
+def _assoc_sig(row: dict) -> str:
+    return f"{row.get('weight') or 0}|{row.get('co_accessed_count') or 0}|{row.get('last_co_accessed_at') or ''}"
+
+
+def _applied(conn) -> dict[str, str]:
+    return {r["key"]: r["sig"] for r in conn.execute("SELECT key, sig FROM sync_applied").fetchall()}
+
+
+def _mark_applied(conn, key: str, sig: str) -> None:
+    conn.execute(
+        "INSERT INTO sync_applied(key, sig) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET sig = excluded.sig",
+        (key, sig),
+    )
+
+
 def device_id() -> str:
     path = config.HIPPOCAMPUS_HOME / "device_id"
     if path.exists():
@@ -113,19 +136,36 @@ def _fragment_payload(conn, row) -> dict[str, Any]:
     return payload
 
 
+ASSOC_BATCH = 500
+
+
 def collect_ops(since: str) -> list[dict[str, Any]]:
-    """Local changes strictly newer than `since` (microsecond timestamps)."""
+    """Local changes strictly newer than `since` (microsecond timestamps).
+
+    Rows whose current signature equals the one recorded when they were
+    applied from a pull are skipped, so pulled ops are not echoed back.
+    Fragments whose embedding is newer than `since` are included even when
+    the row itself did not change (reindex after push).
+    """
     ops: list[dict[str, Any]] = []
     with get_ro_conn() as conn:
+        applied = _applied(conn)
         rows = conn.execute(
-            "SELECT * FROM fragments WHERE updated_at > ? OR COALESCE(last_accessed_at, '') > ?",
-            (since, since),
+            """
+            SELECT f.* FROM fragments f
+            LEFT JOIN fragment_embeddings e ON e.fragment_id = f.id
+            WHERE f.updated_at > ? OR COALESCE(f.last_accessed_at, '') > ? OR COALESCE(e.created_at, '') > ?
+            """,
+            (since, since, since),
         ).fetchall()
         for row in rows:
             payload = _fragment_payload(conn, row)
+            emb_b64 = (payload.get("embedding") or {}).get("vector_b64")
+            if applied.get(f"frag:{row['id']}") == _frag_sig(payload, emb_b64):
+                continue
             ops.append({
                 "entity": "fragment", "entity_id": row["id"], "op": "upsert",
-                "updated_at": max(row["updated_at"] or "", row["last_accessed_at"] or ""),
+                "updated_at": max(row["updated_at"] or "", row["last_accessed_at"] or "", _now() if emb_b64 else ""),
                 "payload": payload,
             })
         for row in conn.execute("SELECT fragment_id, deleted_at FROM fragment_tombstones WHERE deleted_at > ?", (since,)).fetchall():
@@ -133,10 +173,17 @@ def collect_ops(since: str) -> list[dict[str, Any]]:
                 "entity": "tombstone", "entity_id": row["fragment_id"], "op": "delete",
                 "updated_at": row["deleted_at"], "payload": {"deleted_at": row["deleted_at"]},
             })
+        pairs: list[dict[str, Any]] = []
         for row in conn.execute("SELECT * FROM associations WHERE last_co_accessed_at > ?", (since,)).fetchall():
+            pair = {k: row[k] for k in row.keys()}
+            if applied.get(f"assoc:{pair['fragment_a']}|{pair['fragment_b']}") == _assoc_sig(pair):
+                continue
+            pairs.append(pair)
+        for i in range(0, len(pairs), ASSOC_BATCH):
+            chunk = pairs[i:i + ASSOC_BATCH]
             ops.append({
-                "entity": "association", "entity_id": f"{row['fragment_a']}|{row['fragment_b']}", "op": "upsert",
-                "updated_at": row["last_co_accessed_at"], "payload": {k: row[k] for k in row.keys()},
+                "entity": "associations", "entity_id": f"batch:{chunk[0]['fragment_a']}:{i // ASSOC_BATCH}", "op": "upsert",
+                "updated_at": max(p_["last_co_accessed_at"] or "" for p_ in chunk), "payload": {"pairs": chunk},
             })
     ppath = projects.projects_path()
     if ppath.exists():
@@ -187,12 +234,15 @@ def _write_fragment(conn, merged: dict[str, Any]) -> None:
     )
 
 
-def _apply_embedding(conn, fid: str, emb: dict[str, Any] | None) -> None:
+def _apply_embedding(conn, fid: str, emb: dict[str, Any] | None) -> bool:
     if not emb:
-        return
+        return False
     if emb.get("model") != config.get_setting("embedding_model"):
-        return
+        return False
     blob = base64.b64decode(emb["vector_b64"])
+    current = conn.execute("SELECT vector FROM fragment_embeddings WHERE fragment_id = ?", (fid,)).fetchone()
+    if current and bytes(current["vector"]) == blob:
+        return False
     conn.execute(
         """
         INSERT INTO fragment_embeddings (fragment_id, vector, dim, model) VALUES (?, ?, ?, ?)
@@ -200,6 +250,32 @@ def _apply_embedding(conn, fid: str, emb: dict[str, Any] | None) -> None:
         """,
         (fid, blob, int(emb["dim"]), emb["model"]),
     )
+    return True
+
+
+def _upsert_association(conn, payload: dict[str, Any]) -> bool:
+    a, b = payload.get("fragment_a"), payload.get("fragment_b")
+    if not a or not b:
+        return False
+    if not conn.execute("SELECT 1 FROM fragments WHERE id IN (?, ?) GROUP BY 1 HAVING COUNT(*) = 2", (a, b)).fetchone():
+        return False
+    row = conn.execute("SELECT * FROM associations WHERE fragment_a = ? AND fragment_b = ?", (a, b)).fetchone()
+    local = {k: row[k] for k in row.keys()} if row else None
+    merged = merge.merge_association(local, payload)
+    if local and _assoc_sig(local) == _assoc_sig(merged):
+        return False
+    conn.execute(
+        """
+        INSERT INTO associations (fragment_a, fragment_b, weight, co_accessed_count, last_co_accessed_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(fragment_a, fragment_b) DO UPDATE SET
+            weight = excluded.weight, co_accessed_count = excluded.co_accessed_count,
+            last_co_accessed_at = excluded.last_co_accessed_at
+        """,
+        (a, b, merged["weight"], merged["co_accessed_count"], merged["last_co_accessed_at"] or _now()),
+    )
+    _mark_applied(conn, f"assoc:{a}|{b}", _assoc_sig(merged))
+    return True
 
 
 def apply_ops(ops: list[dict[str, Any]]) -> dict[str, int]:
@@ -213,11 +289,17 @@ def apply_ops(ops: list[dict[str, Any]]) -> dict[str, int]:
                     continue
                 local = _local_fragment(conn, eid)
                 merged = merge.merge_fragment(local, payload)
-                if not merge.changed(local, merged):
+                row_changed = merge.changed(local, merged)
+                if row_changed:
+                    _write_fragment(conn, merged)
+                emb_changed = _apply_embedding(conn, eid, payload.get("embedding")) if (row_changed or local) else False
+                if not row_changed and not emb_changed:
                     stats["skipped"] += 1
                     continue
-                _write_fragment(conn, merged)
-                _apply_embedding(conn, eid, payload.get("embedding"))
+                stored = _local_fragment(conn, eid) or merged
+                emb_row = conn.execute("SELECT vector FROM fragment_embeddings WHERE fragment_id = ?", (eid,)).fetchone()
+                emb_b64 = base64.b64encode(bytes(emb_row["vector"])).decode("ascii") if emb_row else None
+                _mark_applied(conn, f"frag:{eid}", _frag_sig(stored, emb_b64))
                 stats["fragments"] += 1
             elif entity == "tombstone":
                 local = _local_fragment(conn, eid)
@@ -227,25 +309,16 @@ def apply_ops(ops: list[dict[str, Any]]) -> dict[str, int]:
                 else:
                     stats["skipped"] += 1
             elif entity == "association":
-                a, b = payload.get("fragment_a"), payload.get("fragment_b")
-                if not a or not b:
-                    continue
-                if not conn.execute("SELECT 1 FROM fragments WHERE id IN (?, ?) GROUP BY 1 HAVING COUNT(*) = 2", (a, b)).fetchone():
+                if _upsert_association(conn, payload):
+                    stats["associations"] += 1
+                else:
                     stats["skipped"] += 1
-                    continue
-                row = conn.execute("SELECT * FROM associations WHERE fragment_a = ? AND fragment_b = ?", (a, b)).fetchone()
-                merged = merge.merge_association({k: row[k] for k in row.keys()} if row else None, payload)
-                conn.execute(
-                    """
-                    INSERT INTO associations (fragment_a, fragment_b, weight, co_accessed_count, last_co_accessed_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(fragment_a, fragment_b) DO UPDATE SET
-                        weight = excluded.weight, co_accessed_count = excluded.co_accessed_count,
-                        last_co_accessed_at = excluded.last_co_accessed_at
-                    """,
-                    (a, b, merged["weight"], merged["co_accessed_count"], merged["last_co_accessed_at"] or _now()),
-                )
-                stats["associations"] += 1
+            elif entity == "associations":
+                for pair in payload.get("pairs") or []:
+                    if _upsert_association(conn, pair):
+                        stats["associations"] += 1
+                    else:
+                        stats["skipped"] += 1
             elif entity == "config" and eid == "projects":
                 if isinstance(payload, dict) and payload:
                     local_rules = projects.load()
