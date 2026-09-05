@@ -200,14 +200,29 @@ device by design.
    `http://<hostname>.local:7879`; anything beyond that needs a VPN or a TLS
    reverse proxy in front of the server.
 2. On one always-on machine (or a small VPS on the tailnet), start the
-   server and note the printed token. Bind it to the tailnet address only, so
-   nothing outside the VPN can reach it:
+   server and note the printed token:
    ```bash
-   bash scripts/install.sh --sync-server --sync-host="$(tailscale ip -4)" --sync-port=7879
+   bash scripts/install.sh --sync-server --sync-host=0.0.0.0 --sync-port=7879
    ```
-   Use `--sync-host=0.0.0.0` only if you rely on LAN or a reverse proxy.
-   Re-run the same command to change the bind address later.
-3. On every device, point at the server through the tailnet:
+   On Linux you can bind to the tailnet address only with
+   `--sync-host="$(tailscale ip -4)"`. On macOS do not: a process on the
+   same Mac cannot reach its own tailnet IP (the connection hangs), so the
+   server host must talk to itself over loopback and therefore needs the
+   `0.0.0.0` bind. The token is the access control; other devices on the
+   tailnet reach it by MagicDNS name. Re-run the same command to change the
+   bind address later.
+
+   Two macOS gotchas after installing Tailscale:
+   - If `nslookup github.com` starts failing, Tailscale has taken over DNS
+     and its resolver is not answering. `tailscale set --accept-dns=false`
+     restores the system resolver (reversible with `--accept-dns=true`); the
+     other devices still resolve MagicDNS names, and this machine uses the
+     server by IP or loopback.
+   - `launchctl bootstrap` right after a re-install can fail with
+     "Input/output error"; the installer retries, or run the printed
+     `launchctl bootstrap` line by hand.
+3. On every device, point at the server through the tailnet. On the server
+   host itself use `http://127.0.0.1:7879`.
    ```bash
    hippo config set sync_url http://my-server:7879     # MagicDNS name, or http://100.x.y.z:7879
    hippo config set sync_token <token>
