@@ -2,7 +2,8 @@
 
 On any `recall` or `get_fragment` call:
 
-* confidence += BOOST_DELTA (capped at CONFIDENCE_MAX)
+* confidence += BOOST_DELTA * (1 - confidence)   (asymptotic, V11)
+* fragments already injected into the session are not boosted (V11)
 * accessed   += 1
 * last_accessed_at = now
 * optional context_tag is attached
@@ -34,6 +35,11 @@ def _store_context_tag(context_tag: str | None) -> bool:
     )
 
 
+def boost_delta(confidence: float) -> float:
+    """Asymptotic boost: large when unsure, vanishing near 1.0."""
+    return config.BOOST_DELTA * max(0.0, 1.0 - confidence)
+
+
 def boost(
     fragment_id: str,
     *,
@@ -45,7 +51,14 @@ def boost(
     current = frag_store.get(fragment_id)
     if current is None:
         return None
-    new_conf = min(config.CONFIDENCE_MAX, current.confidence + config.BOOST_DELTA)
+
+    if session_id is None and client:
+        session_id = sessions.current_session_id(client, open_if_missing=True)
+    if session_id and fragment_id in sessions.injected_fragment_ids(session_id):
+        return current
+
+    delta = boost_delta(current.confidence)
+    new_conf = min(config.CONFIDENCE_MAX, current.confidence + delta)
     now = _utc_now()
 
     add_tags: list[str] = []
@@ -61,17 +74,13 @@ def boost(
         add_tags=add_tags,
     )
 
-    # Figure out which session logs this access. Prefer the explicit
-    # session_id, else derive from client pointer, else skip.
-    if session_id is None and client:
-        session_id = sessions.current_session_id(client, open_if_missing=True)
     if session_id:
         sessions.log_access(session_id, fragment_id)
 
     feedback.log(
         fragment_id,
         "boost",
-        delta=config.BOOST_DELTA,
+        delta=delta,
         reason=context_tag,
         session_id=session_id,
     )
@@ -161,6 +170,27 @@ def _small_boost(
         reason=context_tag,
         session_id=session_id,
     )
+
+
+def mark_useful(fragment_id: str, session_id: str | None = None) -> frag_store.Fragment | None:
+    """Explicit positive feedback: the only way past the asymptote to 1.0."""
+    current = frag_store.get(fragment_id)
+    if current is None:
+        return None
+    updated = frag_store.update_fields(
+        fragment_id,
+        confidence=config.CONFIDENCE_MAX,
+        accessed_delta=1,
+        last_accessed_at=_utc_now(),
+        below_threshold_since=None,
+    )
+    feedback.log(
+        fragment_id,
+        "useful",
+        delta=config.CONFIDENCE_MAX - current.confidence,
+        session_id=session_id,
+    )
+    return updated
 
 
 def apply_negative_feedback(

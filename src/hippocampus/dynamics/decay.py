@@ -110,8 +110,14 @@ def run_decay_cycle(*, dry_run: bool = False) -> DecayResult:
                 below_flag = None  # recovered — clear flag
 
             frag_store.update_fields(frag.id, confidence=new_conf, below_threshold_since=below_flag)
-            feedback.log(frag.id, "decay", delta=-config.DECAY_DELTA, reason=None)
 
         result.fragments_decayed += 1
 
+    if not dry_run and result.fragments_decayed:
+        feedback.log(
+            "decay-cycle",
+            "decay",
+            delta=-config.DECAY_DELTA,
+            reason=f"decayed={result.fragments_decayed}",
+        )
     return result

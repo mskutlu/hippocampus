@@ -144,6 +144,16 @@ _DEFAULTS: dict[str, Any] = {
     "dedup_cosine_threshold": 0.95,        # hippo dedup: pairs above this are duplicates
     "autoremember_enabled": True,          # UserPromptSubmit pattern-detect
     "autoremember_min_chars": 60,          # skip short prompts (no rule body)
+    "autoremember_ignore_patterns": [      # V11: never remember hook envelopes
+        r"^\s*<",
+        r"<task-notification>",
+        r"<system-reminder>",
+        r"<task-id>",
+    ],
+    "autoremember_max_sentence_chars": 300, # V11: trigger sentence must be short
+    "distill_max_chars": 4000,             # V11: cap on session-summary fragments
+    "feedback_retention_days": 90,         # V11: daily prune of feedback_log
+    "session_cleanup_age_hours": 24,       # V11: delete empty sessions older than this
     "inferred_negation_enabled": True,     # auto-forget on negation
     "inferred_negation_window_turns": 2,   # only consider last N turns for the cite-target
     "observe_default_confidence": 0.30,    # hippo observe starts fragments here (vs 0.50)

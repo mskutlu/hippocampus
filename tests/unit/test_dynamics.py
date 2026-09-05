@@ -16,22 +16,50 @@ def test_boost_increments_confidence_and_accessed(hippo_env):
     boost.boost(frag.id, client="pytest")
 
     after = F.get(frag.id)
-    assert after.confidence == pytest.approx(0.515)
+    assert after.confidence == pytest.approx(0.5075)  # 0.5 + 0.015 * (1 - 0.5)
     assert after.accessed == 1
     assert after.last_accessed_at is not None
 
 
-def test_boost_saturates_at_one(hippo_env):
+def test_boost_is_asymptotic_below_one(hippo_env):
     from hippocampus.storage import fragments as F
     from hippocampus.dynamics import boost
 
     frag = F.create("c", summary="s")
-    # Bump confidence to 0.99 via update_fields, then boost once more.
     F.update_fields(frag.id, confidence=0.99)
     boost.boost(frag.id, client="pytest")
     after = F.get(frag.id)
-    assert after.confidence <= 1.0
-    assert after.confidence == pytest.approx(1.0)  # clamped
+    assert 0.99 < after.confidence < 1.0
+    assert after.confidence == pytest.approx(0.99 + 0.015 * 0.01)
+
+
+def test_mark_useful_reaches_one(hippo_env):
+    from hippocampus.storage import fragments as F
+    from hippocampus.dynamics import boost
+
+    frag = F.create("c", summary="s")
+    boost.mark_useful(frag.id)
+    after = F.get(frag.id)
+    assert after.confidence == 1.0
+    assert after.accessed == 1
+
+
+def test_injected_fragment_is_not_boosted(hippo_env):
+    from hippocampus.storage import fragments as F, sessions
+    from hippocampus.dynamics import boost
+
+    sid = sessions.open_session("pytest")
+    frag = F.create("c", summary="s")
+    sessions.log_access(sid, frag.id, via="inject")
+    boost.boost(frag.id, session_id=sid)
+    assert F.get(frag.id).confidence == 0.5
+    assert F.get(frag.id).accessed == 0
+
+    # A real recall in a later session boosts again.
+    sessions.close_session(sid)
+    sid2 = sessions.open_session("pytest")
+    boost.boost(frag.id, session_id=sid2)
+    assert F.get(frag.id).confidence == pytest.approx(0.5075)
 
 
 def test_boost_adds_context_tag(hippo_env):
@@ -108,7 +136,7 @@ def test_decay_shields_recently_accessed(hippo_env):
     sessions.open_session("pytest")
     decay.run_decay_cycle()
     after = F.get(f.id)
-    assert after.confidence == pytest.approx(0.515)  # boosted, not decayed
+    assert after.confidence == pytest.approx(0.5075)  # boosted, not decayed
 
 
 def test_decay_applies_to_unused_fragments(hippo_env):

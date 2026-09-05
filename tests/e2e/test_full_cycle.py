@@ -25,9 +25,9 @@ def test_full_cycle_shield_then_decay_then_archive(hippo_env, monkeypatch):
     fid = res["fragment"]["id"]
     assert F.get(fid).confidence == 0.5
 
-    # 2. Recall → boost applied (+0.015)
+    # 2. Recall → boost applied (+0.015 * (1 - 0.5))
     T.recall(query="kafka")
-    assert F.get(fid).confidence == pytest.approx(0.515)
+    assert F.get(fid).confidence == pytest.approx(0.5075)
 
     # 3. New session starts — fragment is still in the recent-two-sessions
     #    shield window, so decay must NOT touch it.
@@ -35,7 +35,7 @@ def test_full_cycle_shield_then_decay_then_archive(hippo_env, monkeypatch):
     sessions.close_session(current_sid)
     sessions.open_session("pytest")
     decay.run_decay_cycle()
-    assert F.get(fid).confidence == pytest.approx(0.515)
+    assert F.get(fid).confidence == pytest.approx(0.5075)
 
     # 4. Two more sessions pass without access. The shield window slides past
     #    our fragment and decay starts biting.
@@ -44,7 +44,7 @@ def test_full_cycle_shield_then_decay_then_archive(hippo_env, monkeypatch):
         sessions.close_session(sid)
         sessions.open_session("pytest")
     decay.run_decay_cycle()
-    assert F.get(fid).confidence == pytest.approx(0.513)
+    assert F.get(fid).confidence == pytest.approx(0.5055)
 
     # 5. Drop confidence near zero and simulate the grace period having
     #    elapsed so the archive sweep catches it.

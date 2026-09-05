@@ -67,8 +67,8 @@ def test_auto_remember_persists_fragment(hippo_env, monkeypatch):
     frag = autoremember.auto_remember_from_prompt(prompt, client="devin")
     assert frag is not None
     assert "auto-remembered" in frag["tags"]
-    assert "client:devin" in frag["tags"]
-    assert any(t.startswith("trigger:") for t in frag["tags"])
+    assert "devin" in frag["tags"]
+    assert not any(":" in t for t in frag["tags"])
     assert frag["source_type"] == "auto-remembered"
 
 
@@ -108,3 +108,36 @@ def test_auto_remember_tool_returns_status(hippo_env, monkeypatch):
     assert out["remembered"] is True
     assert out["fragment"] is not None
     assert out["trigger"].startswith("always")
+
+
+# -----------------------------
+# V11 — hook envelopes never become rules
+# -----------------------------
+
+ENVELOPES = [
+    "<task-notification> <task-id>ab05</task-id> <summary>Monitor event: never mind</summary> <event>NOT COMPLETE, make sure you check again</event>",
+    "  <system-reminder>Always respond in English. Never translate.</system-reminder>",
+    "<task-notification>\n<task-id>b60r</task-id>\n<summary>RunAI resume #3 verdicts</summary>\n</task-notification>",
+    "Session summary: <task-notification> <task-id>bwnm</task-id> always be careful",
+]
+
+
+def test_envelopes_are_ignored(hippo_env, monkeypatch):
+    from hippocampus.dynamics import autoremember
+
+    monkeypatch.setenv("HIPPO_AUTOREMEMBER_MIN_CHARS", "10")
+    for text in ENVELOPES:
+        assert autoremember.is_envelope(text)
+        assert autoremember.detect(text) is None, text
+
+
+def test_long_or_tagged_sentence_is_ignored(hippo_env, monkeypatch):
+    from hippocampus.dynamics import autoremember
+
+    monkeypatch.setenv("HIPPO_AUTOREMEMBER_MIN_CHARS", "10")
+    long_sentence = "Never " + "x" * 400 + "."
+    assert autoremember.detect(long_sentence) is None
+    tagged = "Please always run <b>hippo doctor</b> after any setting change to verify."
+    assert autoremember.detect(tagged) is None
+    plain = "Please always run hippo doctor after any setting change to verify."
+    assert autoremember.detect(plain) is not None

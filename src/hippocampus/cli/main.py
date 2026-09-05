@@ -364,6 +364,50 @@ def cleanup_sessions_cmd(dry_run: bool) -> None:
     click.echo(json.dumps(maintenance.cleanup_sessions(dry_run=dry_run), indent=2, ensure_ascii=False))
 
 
+@cli.command("audit")
+def audit_cmd() -> None:
+    """Memory-health report (noise, saturation, coverage, stale sessions). Exit 1 on breach."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    report = maintenance.audit()
+    click.echo(json.dumps(report, indent=2, ensure_ascii=False))
+    if not report["ok"]:
+        sys.exit(1)
+
+
+@cli.command("purge-noise")
+@click.option("--dry-run/--commit", default=True, help="Preview without mutating")
+def purge_noise_cmd(dry_run: bool) -> None:
+    """Delete hook-markup fragments and shrink oversized session summaries (backs up first)."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    click.echo(json.dumps(maintenance.purge_noise(dry_run=dry_run), indent=2, ensure_ascii=False))
+
+
+@cli.command("maintain")
+@click.option("--dry-run/--commit", default=False)
+def maintain_cmd(dry_run: bool) -> None:
+    """Daily job: archive, clean sessions, prune feedback, reindex embeddings."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    click.echo(json.dumps(maintenance.run_daily_maintenance(dry_run=dry_run), indent=2, ensure_ascii=False))
+
+
+@cli.command("mark")
+@click.argument("fragment_id")
+@click.option("--useful/--not-useful", default=True)
+@click.option("--reason", default=None)
+def mark_cmd(fragment_id: str, useful: bool, reason: Optional[str]) -> None:
+    """Explicit feedback on a fragment."""
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    click.echo(json.dumps(tools.mark(fragment_id, useful=useful, reason=reason), indent=2, ensure_ascii=False))
+
+
 @cli.command("reconcile-mirror")
 @click.option("--dry-run/--commit", default=True, help="Preview without mutating")
 def reconcile_mirror_cmd(dry_run: bool) -> None:

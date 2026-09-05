@@ -35,6 +35,15 @@ TRIGGER_RE = re.compile(
 
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-ZĞÜŞİÖÇ])")
+_TAG_RE = re.compile(r"<[a-zA-Z][\w-]*>")
+
+
+def is_envelope(text: str) -> bool:
+    """True when the prompt is machine-generated hook/task markup, not a user sentence."""
+    patterns = config.get_setting("autoremember_ignore_patterns") or []
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    return any(re.search(pat, text, re.IGNORECASE) for pat in patterns)
 
 
 @dataclass
@@ -51,6 +60,8 @@ def detect(prompt: str) -> Optional[DetectedRule]:
         return None
 
     text = prompt.strip()
+    if is_envelope(text):
+        return None
     m = TRIGGER_RE.search(text)
     if m is None:
         return None
@@ -69,6 +80,9 @@ def detect(prompt: str) -> Optional[DetectedRule]:
         running += len(s) + 1
 
     sentence = sentences[trigger_idx].strip()
+    max_len = int(config.get_setting("autoremember_max_sentence_chars") or 0)
+    if (max_len and len(sentence) > max_len) or _TAG_RE.search(sentence):
+        return None
     ctx_before = sentences[trigger_idx - 1].strip() if trigger_idx > 0 else ""
     ctx_after = sentences[trigger_idx + 1].strip() if trigger_idx + 1 < len(sentences) else ""
     context = " ".join(p for p in (ctx_before, sentence, ctx_after) if p)
@@ -100,11 +114,7 @@ def auto_remember_from_prompt(prompt: str, *, client: str = "unknown") -> dict |
         if (existing.summary or "").strip() == rule.summary.strip():
             return None
 
-    tags = [
-        "auto-remembered",
-        f"client:{client}",
-        f"trigger:{rule.trigger.replace(' ', '_')}",
-    ]
+    tags = ["auto-remembered", client]
     res = T.remember(
         content=rule.context,
         summary=rule.summary,

@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>__HIPPO_BIN__</string>
-        <string>archive</string>
+        <string>maintain</string>
     </array>
 
     <key>StartInterval</key>

@@ -110,11 +110,27 @@ def _working_section(client: str, *, content_max: int = 220) -> list[str]:
     return out
 
 
+def _record_injection(client: str | None, fragment_ids: list[str]) -> None:
+    """Mark fragments as injected so a later recall does not boost them (V11)."""
+    if not client or not fragment_ids:
+        return
+    try:
+        sid = sessions.current_session_id(client, open_if_missing=False)
+    except Exception:
+        return
+    for fid in fragment_ids:
+        try:
+            sessions.log_access(sid, fid, via="inject")
+        except Exception:
+            pass
+
+
 def _fragment_section(
     query: str | None,
     *,
     limit: int,
     extra_query_streams: list[str] | None = None,
+    client: str | None = None,
 ) -> list[str]:
     """Render top-N long-term fragments (query-driven if query, else ranked).
 
@@ -139,7 +155,7 @@ def _fragment_section(
 
     if query and query.strip():
         try:
-            recall_out = T.recall(query=query.strip(), limit=limit)
+            recall_out = T.recall(query=query.strip(), limit=limit, boost=False)
             _add_hits(recall_out.get("fragments") or [])
         except Exception:
             pass
@@ -152,7 +168,7 @@ def _fragment_section(
             if not stream or not stream.strip():
                 continue
             try:
-                stream_out = T.recall(query=stream.strip(), limit=2)
+                stream_out = T.recall(query=stream.strip(), limit=2, boost=False)
             except Exception:
                 continue
             _add_hits(stream_out.get("fragments") or [])
@@ -170,6 +186,7 @@ def _fragment_section(
     # Preserve insertion order (explicit query first, then ledger streams,
     # then top-N) and respect the limit.
     fragments = list(fragments_by_id.values())[:limit]
+    _record_injection(client, [f.get("id") for f in fragments if f.get("id")])
 
     header = (
         "## Top memories matching the latest prompt"
@@ -284,7 +301,7 @@ def render_context(
     if sec:
         sections.append(sec)
     if include_fragments:
-        sec = _fragment_section(query, limit=fragment_limit, extra_query_streams=extra_query_streams)
+        sec = _fragment_section(query, limit=fragment_limit, extra_query_streams=extra_query_streams, client=client)
         if sec:
             sections.append(sec)
 

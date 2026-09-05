@@ -122,7 +122,7 @@ case "$PLATFORM" in
         cat <<EOF
       0 *    * * *  env HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" decay   >>"$LOG_DIR/cron-decay.log"   2>&1
       */10 * * * *  env HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" inject  >>"$LOG_DIR/cron-inject.log"  2>&1
-      15 4   * * *  env HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" archive >>"$LOG_DIR/cron-archive.log" 2>&1
+      15 4   * * *  env HIPPOCAMPUS_HOME="$HIPPO_HOME" HIPPOCAMPUS_VAULT="$HIPPO_VAULT" "$HIPPO_BIN" maintain >>"$LOG_DIR/cron-archive.log" 2>&1
 EOF
         echo ""
         echo "    Or, for systemd users, see scripts/systemd/ (not shipped yet —"
@@ -132,7 +132,7 @@ EOF
     windows-bash)
         echo "    Windows Git-Bash / MSYS detected — no daemon auto-install."
         echo "    The hippo CLI and MCP server work; register a scheduled task"
-        echo "    for 'hippo decay' (hourly), 'hippo inject' (10 min),"
+        echo "    for 'hippo decay' (hourly), 'hippo inject' (10 min), 'hippo maintain' (daily),"
         echo "    and 'hippo archive' (daily) via Task Scheduler. See README."
         ;;
 

@@ -448,6 +448,12 @@ hippo cleanup-sessions --dry-run
 hippo reconcile-mirror --dry-run
 hippo backup
 hippo restore ~/.hippocampus/backups/hippocampus-20260101T120000000000Z.db
+
+# Memory health (V11)
+hippo audit                     # noise, saturation, coverage, stale sessions; exit 1 on breach
+hippo purge-noise --dry-run     # preview; --commit backs up, deletes hook-markup fragments, shrinks oversized summaries
+hippo maintain                  # daily job: archive + session cleanup + feedback prune + reindex + VACUUM
+hippo mark <fragment_id> --useful | --not-useful
 hippo inject --commit
 ```
 

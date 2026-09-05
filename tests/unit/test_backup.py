@@ -46,7 +46,7 @@ def test_failed_migration_restores_original_database(hippo_env, tmp_path, monkey
     fragment = fragments.create("survives migration failure")
     migration_dir = tmp_path / "migrations"
     migration_dir.mkdir()
-    (migration_dir / "009_broken.sql").write_text(
+    (migration_dir / "999_broken.sql").write_text(
         "CREATE TABLE partial_change(id INTEGER); INVALID SQL;",
         encoding="utf-8",
     )
@@ -122,5 +122,5 @@ def test_integrity_migrations_upgrade_existing_database(hippo_env, tmp_path, mon
     assert total_sessions == 1
     assert "session_id" in columns
     assert foreign_keys == []
-    assert versions == set(range(1, 9))
+    assert versions == set(range(1, 10))
     assert audit_rows == 1

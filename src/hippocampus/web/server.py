@@ -52,6 +52,10 @@ if FASTAPI_AVAILABLE:
         source_ref: str | None = Field(default=None, max_length=2_000)
         pinned: bool = False
 
+    class MarkBody(BaseModel):
+        useful: bool
+        reason: str | None = Field(default=None, max_length=500)
+
     class ForgetBody(BaseModel):
         reason: str | None = Field(default=None, max_length=1_000)
 
@@ -201,6 +205,25 @@ def create_app() -> "FastAPI":
     @app.post("/api/fragments/{fragment_id}/unpin")
     def api_unpin(fragment_id: str) -> dict:
         return tools.unpin(fragment_id)
+
+    @app.post("/api/fragments/{fragment_id}/mark")
+    def api_mark(fragment_id: str, body: MarkBody = Body(...)) -> dict:
+        return tools.mark(fragment_id, useful=body.useful, reason=body.reason)
+
+    @app.get("/api/triage")
+    def api_triage(limit: int = Query(default=100, ge=1, le=500)) -> dict:
+        from hippocampus.storage.db import get_ro_conn
+
+        with get_ro_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, summary, confidence, accessed, pinned, source_type,
+                       length(content) AS size, created_at, last_accessed_at
+                FROM fragments ORDER BY accessed DESC, confidence DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return {"count": len(rows), "fragments": [dict(r) for r in rows]}
 
     @app.post("/api/fragments/{fragment_id}/forget")
     def api_forget(fragment_id: str, body: ForgetBody = Body(default_factory=ForgetBody)) -> dict:

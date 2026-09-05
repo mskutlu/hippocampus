@@ -72,6 +72,20 @@ def get_ro_conn(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
         config.secure_file(Path(f"{path}-shm"))
 
 
+def vacuum(db_path: Path | None = None) -> int:
+    """Reclaim free pages after bulk deletes. Returns bytes reclaimed."""
+    path = Path(db_path or config.DB_PATH)
+    before = path.stat().st_size if path.exists() else 0
+    conn = sqlite3.connect(path, isolation_level=None, timeout=30.0)
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("VACUUM")
+    finally:
+        conn.close()
+    after = path.stat().st_size if path.exists() else 0
+    return max(0, before - after)
+
+
 def applied_versions(conn: sqlite3.Connection) -> set[int]:
     try:
         rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
