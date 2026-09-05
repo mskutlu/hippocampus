@@ -181,31 +181,54 @@ pins, forgets, and `projects.json`) syncs between your devices through one
 small server you host. Working memory, handoffs, and transcripts stay per
 device by design.
 
-1. On one always-on machine (or a small VPS), start the server and note the
-   printed token. Bind it to a Tailscale address or put TLS in front; the
-   server itself speaks plain HTTP.
+1. Put all devices on one Tailscale network (recommended). The sync server
+   speaks plain HTTP with a single bearer token, so it must not be exposed to
+   the public internet; Tailscale gives every device a private, encrypted
+   address and a stable name, on any network.
+   - Install Tailscale on each device and sign in with the same account:
+     macOS `brew install --cask tailscale` (or the App Store app),
+     Linux `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`,
+     Windows / iOS / Android from tailscale.com/download.
+   - Turn on MagicDNS in the Tailscale admin console (DNS tab) so the server
+     is reachable by name, e.g. `my-server`.
+   - Find the server's tailnet address on the server:
+     ```bash
+     tailscale ip -4        # e.g. 100.101.102.103
+     tailscale status --self --peers=false   # shows the MagicDNS name
+     ```
+   Without Tailscale, devices on the same LAN can use
+   `http://<hostname>.local:7879`; anything beyond that needs a VPN or a TLS
+   reverse proxy in front of the server.
+2. On one always-on machine (or a small VPS on the tailnet), start the
+   server and note the printed token. Bind it to the tailnet address only, so
+   nothing outside the VPN can reach it:
    ```bash
-   bash scripts/install.sh --sync-server --sync-host=0.0.0.0 --sync-port=7879
+   bash scripts/install.sh --sync-server --sync-host="$(tailscale ip -4)" --sync-port=7879
    ```
-2. On every device, point at it:
+   Use `--sync-host=0.0.0.0` only if you rely on LAN or a reverse proxy.
+   Re-run the same command to change the bind address later.
+3. On every device, point at the server through the tailnet:
    ```bash
-   hippo config set sync_url http://<server-host>:7879
+   hippo config set sync_url http://my-server:7879     # MagicDNS name, or http://100.x.y.z:7879
    hippo config set sync_token <token>
    hippo config set sync_enabled true
+   curl http://my-server:7879/v1/health
    ```
-3. On a device that already has memory, clean it once before the first push:
+   The health check needs no token and should return `{"ok": true, ...}`.
+4. On a device that already has memory, clean it once before the first push:
    ```bash
    hippo purge-noise --commit
    hippo project backfill --commit
    ```
-4. Run the first sync by hand and check it:
+5. Run the first sync by hand and check it:
    ```bash
    hippo sync
    hippo doctor        # shows device id, server, last_ok, pending ops
    hippo project detect .
    ```
-5. Leave it. The 10-minute `hippo inject` job pushes and pulls from then on.
-   A device that is offline simply catches up on its next tick.
+6. Leave it. The 10-minute `hippo inject` job pushes and pulls from then on.
+   A device that is offline, or off the tailnet, simply catches up on its
+   next tick.
 
 Merge rules are pure and tested (`hippocampus/sync/merge.py`): the newer
 edit wins for content, pins and project; access counts and confidence take
