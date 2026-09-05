@@ -57,9 +57,9 @@ def test_tags_drop_pipeline_prefixes(hippo_env):
     from hippocampus.storage import fragments as F
 
     frag = F.create("c", summary="s", tags=["log_progress_auto:ask", "client:devin", "trigger:never", "acme", "devin"])
-    assert frag.tags == ["devin", "acme"]
+    assert frag.tags == ["acme", "devin"]
     F.update_fields(frag.id, add_tags=["log_progress:done", "cluster:frag_x", "extra"])
-    assert F.get(frag.id).tags == ["devin", "extra", "acme"]
+    assert F.get(frag.id).tags == ["acme", "devin", "extra"]
 
 
 def test_mark_tool(hippo_env):

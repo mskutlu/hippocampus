@@ -10,12 +10,12 @@ def test_canonicalize_matches_existing_by_ratio(hippo_env, monkeypatch):
     monkeypatch.setenv("HIPPO_TAG_CANONICALIZE_THRESHOLD", "0.85")
 
     # Seed an existing canonical tag
-    T.remember(content="seed", summary="seed", tags=["acme"])
+    T.remember(content="seed", summary="seed", tags=["warehouse"])
 
     # Near-miss variants should fold onto the canonical
-    assert tag_canonical.canonicalize_one("Warehouse") == "acme"
-    assert tag_canonical.canonicalize_one("warehouses") == "acme"
-    assert tag_canonical.canonicalize_one("ware-house") == "acme"
+    assert tag_canonical.canonicalize_one("Warehouse") == "warehouse"
+    assert tag_canonical.canonicalize_one("warehouses") == "warehouse"
+    assert tag_canonical.canonicalize_one("ware-house") == "warehouse"
 
     # Truly different tag is preserved
     assert tag_canonical.canonicalize_one("acme-orders") == "acme-orders"
@@ -26,7 +26,7 @@ def test_canonicalize_disabled_at_zero(hippo_env, monkeypatch):
     from hippocampus.storage import tag_canonical
 
     monkeypatch.setenv("HIPPO_TAG_CANONICALIZE_THRESHOLD", "0")
-    T.remember(content="seed", summary="seed", tags=["acme"])
+    T.remember(content="seed", summary="seed", tags=["warehouse"])
     assert tag_canonical.canonicalize_one("WAREHOUSES") == "WAREHOUSES"
 
 
