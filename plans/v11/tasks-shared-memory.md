@@ -78,20 +78,20 @@ PRD: [prd-shared-memory.md](./prd-shared-memory.md)
   - [ ] 1.17 Re-run `hippo install-hooks` and reload launchd agents; verify a Monitor notification in a live Claude Code session creates no fragment
   - [x] 1.18 Web UI triage view: `/triage` route sorted by `accessed` desc, columns confidence, pinned, project, size, age; row actions unpin, forget, mark not useful calling the same functions as the MCP tools
 
-- [ ] 2.0 Phase 2 — Project scoping
-  - [ ] 2.1 Migration `010_projects.sql`: `fragments.project TEXT`, `sessions.project TEXT`, `idx_fragments_project`
-  - [ ] 2.2 `projects.py`: load and validate `projects.json`; `match_remote(url)`, `match_path(path)`, `resolve(cwd) -> str | None` following FR14 order; git remote read via `git -C <cwd> remote get-url origin` with a 1 s timeout and cached per process
-  - [ ] 2.3 `sessions.start`: resolve and store `project`; `_detect_workspace` result is the cwd for GUI clients
-  - [ ] 2.4 `remember`, `autoremember`, `end_progress`, idle auto-distill: stamp `project` from the current session; `remember(scope="global")` stores `NULL`
-  - [ ] 2.5 `fragments.search_fts`, `list_all`, and `embeddings.search.semantic_topk`: accept `project` filter applied to the candidate set before ranking
-  - [ ] 2.6 `recall(scope="project"|"all")` default `project`; filter is `project = ? OR project IS NULL`
-  - [ ] 2.7 Split injection: rules-file block uses `top_n(project=None, global_only=True)`; hook payload uses `top_n(project=current)` with `hook_fragment_limit`
-  - [ ] 2.8 Hook templates pass `HIPPOCAMPUS_CWD` to `hippo context` so the payload resolves the project; Cursor and VS Code hooks pass the workspace root
-  - [ ] 2.9 CLI `hippo project list|add|detect|assign`
-  - [ ] 2.10 `hippo project backfill [--dry-run]`: session_key cwd match, then tag match against project names and aliases; print counts per project and unmatched
-  - [ ] 2.11 Web UI: project column and filter on the fragment list
-  - [ ] 2.12 Tests: `test_projects.py` (remote wins over path, ancestor marker file, env override, unmatched is None), `test_recall_scope.py` (hidden project not returned, `scope="all"` returns it, global always returned, semantic k not starved)
-  - [ ] 2.13 Draft `projects.json` for the owner's 4 to 5 projects from the audit's tag list; owner confirms names and repos
+- [x] 2.0 Phase 2 — Project scoping
+  - [x] 2.1 Migration `010_projects.sql`: `fragments.project TEXT`, `sessions.project TEXT`, `idx_fragments_project`
+  - [x] 2.2 `projects.py`: load and validate `projects.json`; `match_remote(url)`, `match_path(path)`, `resolve(cwd) -> str | None` following FR14 order; git remote read via `git -C <cwd> remote get-url origin` with a 1 s timeout and cached per process
+  - [x] 2.3 `sessions.start`: resolve and store `project`; `_detect_workspace` result is the cwd for GUI clients
+  - [x] 2.4 `remember`, `autoremember`, `end_progress`, idle auto-distill: stamp `project` from the current session; `remember(scope="global")` stores `NULL`
+  - [x] 2.5 `fragments.search_fts`, `list_all`, and `embeddings.search.semantic_topk`: accept `project` filter applied to the candidate set before ranking
+  - [x] 2.6 `recall(scope="project"|"all")` default `project`; filter is `project = ? OR project IS NULL`
+  - [x] 2.7 Split injection: rules-file block uses `top_n(project=None, global_only=True)`; hook payload uses `top_n(project=current)` with `hook_fragment_limit`
+  - [x] 2.8 Hook templates pass `HIPPOCAMPUS_CWD` to `hippo context` so the payload resolves the project; Cursor and VS Code hooks pass the workspace root
+  - [x] 2.9 CLI `hippo project list|add|detect|assign`
+  - [x] 2.10 `hippo project backfill [--dry-run]`: session_key cwd match, then tag match against project names and aliases; print counts per project and unmatched
+  - [x] 2.11 Web UI: project column and filter on the fragment list
+  - [x] 2.12 Tests: `test_projects.py` (remote wins over path, ancestor marker file, env override, unmatched is None), `test_recall_scope.py` (hidden project not returned, `scope="all"` returns it, global always returned, semantic k not starved)
+  - [x] 2.13 Draft `projects.json` for the owner's 4 to 5 projects from the audit's tag list; owner confirms names and repos
   - [ ] 2.14 Run backfill on the fixture copy; confirm > 80 % assigned; then run on the live primary DB after `hippo backup`
 
 - [ ] 3.0 Phase 3 — Device sync via self-hosted endpoint

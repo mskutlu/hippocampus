@@ -177,8 +177,21 @@ def create_app() -> "FastAPI":
         tag: str | None = Query(default=None, max_length=100),
         min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
         limit: int = Query(default=50, ge=1, le=500),
+        project: str | None = Query(default=None, max_length=64),
     ) -> dict:
-        return tools.list_fragments(tag=tag, min_confidence=min_confidence, limit=limit)
+        scope = "all"
+        if project == "global":
+            scope, project = "global", None
+        elif project:
+            scope = "project"
+        return tools.list_fragments(tag=tag, min_confidence=min_confidence, limit=limit, project=project, scope=scope)
+
+    @app.get("/api/projects")
+    def api_projects() -> dict:
+        from hippocampus import projects
+        from hippocampus.storage import fragments as F
+
+        return {"projects": projects.load(), "fragments": F.project_counts()}
 
     @app.get("/api/fragments/{fragment_id}")
     def api_fragment_get(fragment_id: str) -> dict:

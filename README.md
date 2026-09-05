@@ -84,6 +84,18 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Source-backed pages** — ingested markdown/text sources create source pages,
   index/log entries, FTS-backed queryable context, and durable source IDs/refs.
 
+### Project scoping — `recall(scope=...)` / `remember(scope=...)`
+
+- **One memory, many companies.** A fragment belongs to a project or is
+  global. Inside a repo, `recall` returns that project's fragments plus global
+  ones; other projects stay hidden unless you pass `scope="all"`.
+- **Resolved from where you are.** `~/.hippocampus/projects.json` maps git
+  remotes and path globs to a project name. `HIPPOCAMPUS_PROJECT` or a
+  `.hippocampus-project` file in the repo overrides it.
+- **Rules files stay global.** The always-on block carries only global
+  fragments; project memory arrives through the lifecycle hooks, which know
+  the working directory. See "Multiple devices and projects" below.
+
 ---
 
 ## Install
@@ -139,7 +151,34 @@ The installer auto-resolves its own repo location, so you can clone into `~/src/
 5. Writes the first injection block into each client's rules file. For Cursor this is the always-on rule `~/.cursor/rules/hippocampus.mdc` (`alwaysApply: true`), for Codex `~/.codex/AGENTS.md`, for VS Code Copilot `~/.copilot/instructions/hippocampus.instructions.md`, for ZCode `~/.zcode/AGENTS.md`, for Zed `~/.config/zed/AGENTS.md` (Zed's global instructions file), for Hermes `~/.hermes/SOUL.md` (loaded for every Hermes session), and for Pi `~/.pi/agent/AGENTS.md`. Every pre-existing file gets a one-time `<path>.pre-hippocampus.bak` copy before mutation.
 6. Runs `hippo doctor`.
 
-### Updating an existing install
+### Multiple devices and projects
+
+**Projects.** Create `~/.hippocampus/projects.json` (or use `hippo project add`):
+
+```json
+{
+  "acme": {
+    "remotes": ["gitlab.com/acme/*"],
+    "paths": ["~/work/acme-*", "~/work/acme-legacy-*"],
+    "aliases": ["customer-a", "acme-orders"]
+  },
+  "globex": {"remotes": ["bitbucket.globex.example/*"], "paths": ["~/work/globex/**"], "aliases": ["bss-*", "qa-*"]}
+}
+```
+
+- `remotes` are matched against `git remote get-url origin` with scheme and
+  `.git` stripped; a remote match wins over a path match; the longest pattern wins.
+- `paths` are globs expanded per device, matched against the cwd and its parents.
+- `aliases` are only used by `hippo project backfill` to map old tags and
+  session folders onto a project.
+- Check with `hippo project detect <path>`; assign by hand with
+  `hippo project assign <name> --fragment <id>` or `--tag <tag>`.
+
+Anything that matches no rule is **global** and visible in every project.
+
+**Devices.** See the V11 sync section (Phase 3) once shipped.
+
+## Updating an existing install
 
 You normally do **not** need to delete and reinstall Hippocampus after pulling
 changes. Refresh the editable install, apply migrations, refresh client config,
@@ -448,6 +487,12 @@ hippo cleanup-sessions --dry-run
 hippo reconcile-mirror --dry-run
 hippo backup
 hippo restore ~/.hippocampus/backups/hippocampus-20260101T120000000000Z.db
+
+# Projects (V11) — separate companies/repos; see "Multiple devices and projects"
+hippo project list
+hippo project add acme --remote 'gitlab.com/acme/*' --path '~/work/acme-*' --alias customer-a
+hippo project detect ~/work/acme-orders
+hippo project backfill --dry-run   # assign projects to existing fragments from session paths + tags
 
 # Memory health (V11)
 hippo audit                     # noise, saturation, coverage, stale sessions; exit 1 on breach

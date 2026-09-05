@@ -408,6 +408,74 @@ def mark_cmd(fragment_id: str, useful: bool, reason: Optional[str]) -> None:
     click.echo(json.dumps(tools.mark(fragment_id, useful=useful, reason=reason), indent=2, ensure_ascii=False))
 
 
+@cli.group(name="project")
+def project_group() -> None:
+    """Project scoping: map repos/paths to a project name (V11)."""
+
+
+@project_group.command("list")
+def project_list_cmd() -> None:
+    """Show projects.json rules and fragment counts per project."""
+    _bootstrap()
+    from hippocampus import projects
+    from hippocampus.storage import fragments as F
+
+    click.echo(json.dumps({"path": str(projects.projects_path()), "projects": projects.load(), "fragments": F.project_counts()}, indent=2, ensure_ascii=False))
+
+
+@project_group.command("add")
+@click.argument("name")
+@click.option("--remote", multiple=True, help="Remote glob, e.g. gitlab.com/acme/*")
+@click.option("--path", "paths", multiple=True, help="Path glob, e.g. ~/work/acme-*")
+@click.option("--alias", multiple=True, help="Tag/folder alias used by backfill")
+def project_add_cmd(name: str, remote: tuple, paths: tuple, alias: tuple) -> None:
+    """Add or extend a project rule."""
+    _bootstrap()
+    from hippocampus import projects
+
+    click.echo(json.dumps(projects.add(name, remotes=list(remote), paths=list(paths), aliases=list(alias)), indent=2))
+
+
+@project_group.command("detect")
+@click.argument("path", default=".")
+def project_detect_cmd(path: str) -> None:
+    """Print the project resolved for PATH (default: cwd)."""
+    _bootstrap()
+    from hippocampus import projects
+
+    resolved = str(Path(path).expanduser().resolve())
+    click.echo(json.dumps({"path": resolved, "remote": projects.git_remote(resolved), "project": projects.resolve(resolved)}, indent=2))
+
+
+@project_group.command("assign")
+@click.argument("project")
+@click.option("--fragment", "fragment_ids", multiple=True, help="Fragment id (repeatable)")
+@click.option("--tag", default=None, help="Assign every fragment carrying this tag")
+def project_assign_cmd(project: str, fragment_ids: tuple, tag: Optional[str]) -> None:
+    """Assign fragments to PROJECT ('global' clears the project)."""
+    _bootstrap()
+    from hippocampus import projects
+    from hippocampus.storage import fragments as F
+
+    target = None if project == "global" else projects.validate_name(project)
+    ids = list(fragment_ids)
+    if tag:
+        ids += [f.id for f in F.list_by_tag(tag, limit=10_000)]
+    for fid in ids:
+        F.update_fields(fid, project=target)
+    click.echo(json.dumps({"project": target, "updated": len(ids)}, indent=2))
+
+
+@project_group.command("backfill")
+@click.option("--dry-run/--commit", default=True)
+def project_backfill_cmd(dry_run: bool) -> None:
+    """Assign projects to existing fragments from session paths and tags."""
+    _bootstrap()
+    from hippocampus import projects
+
+    click.echo(json.dumps(projects.backfill(dry_run=dry_run), indent=2, ensure_ascii=False))
+
+
 @cli.command("reconcile-mirror")
 @click.option("--dry-run/--commit", default=True, help="Preview without mutating")
 def reconcile_mirror_cmd(dry_run: bool) -> None:
@@ -499,7 +567,9 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool) -> None:
     from hippocampus.mcp.tools import _session_row
     from hippocampus.storage import ledger as ledger_store, sessions
 
-    frags = ranking.top_n(limit=limit)
+    # Rules files carry global (project-less) memory only; project memory
+    # reaches the model through the hook payload, which knows the cwd (V11).
+    frags = ranking.top_n(limit=limit, scope="global")
     long_block = format_injection_block(frags)
 
     if not dry_run:

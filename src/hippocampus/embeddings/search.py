@@ -112,10 +112,17 @@ def reindex(force: bool = False, batch: int = 64) -> dict:
     }
 
 
-def semantic_topk(query: str, k: int = 5) -> list[tuple[str, float]]:
+def semantic_topk(
+    query: str,
+    k: int = 5,
+    *,
+    allowed_ids: set[str] | None = None,
+) -> list[tuple[str, float]]:
     """Return [(fragment_id, cosine_score)] for top-k semantic matches.
 
-    Empty list if embeddings aren't loaded or the provider is unavailable.
+    `allowed_ids` restricts candidates before ranking (project scope, V11) so
+    hidden fragments never consume the k slots. Empty list if embeddings
+    aren't loaded or the provider is unavailable.
     """
     provider = load_provider()
     if provider is None:
@@ -130,6 +137,8 @@ def semantic_topk(query: str, k: int = 5) -> list[tuple[str, float]]:
 
     results: list[tuple[str, float]] = []
     for fid, vec, _ in vstore.iter_all(model=provider.model):
+        if allowed_ids is not None and fid not in allowed_ids:
+            continue
         results.append((fid, cosine(q_vec, vec)))
     results.sort(key=lambda t: -t[1])
     return results[:k]

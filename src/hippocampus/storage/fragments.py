@@ -71,6 +71,7 @@ class Fragment:
     updated_at: str = ""
     pinned: bool = False
     below_threshold_since: str | None = None
+    project: str | None = None
     tags: list[str] = field(default_factory=list)
     associated_with: list[str] = field(default_factory=list)
 
@@ -88,6 +89,7 @@ class Fragment:
             "updated_at": self.updated_at,
             "pinned": self.pinned,
             "below_threshold_since": self.below_threshold_since,
+            "project": self.project,
             "tags": list(self.tags),
             "associated_with": list(self.associated_with),
         }
@@ -107,9 +109,25 @@ def _row_to_fragment(row: sqlite3.Row, tags: list[str], assoc: list[str]) -> Fra
         updated_at=row["updated_at"],
         pinned=bool(row["pinned"]),
         below_threshold_since=row["below_threshold_since"],
+        project=row["project"] if "project" in row.keys() else None,
         tags=tags,
         associated_with=assoc,
     )
+
+
+def scope_clause(project: str | None, scope: str, alias: str = "f") -> tuple[str, list]:
+    """SQL filter for project scoping (V11).
+
+    scope='all'     -> no filter
+    scope='global'  -> project IS NULL
+    scope='project' -> project = ? OR project IS NULL   (falls back to global when project is None)
+    """
+    col = f"{alias}.project" if alias else "project"
+    if scope == "all":
+        return "", []
+    if scope == "global" or project is None:
+        return f" AND {col} IS NULL", []
+    return f" AND ({col} = ? OR {col} IS NULL)", [project]
 
 
 def _fetch_tags(conn: sqlite3.Connection, fragment_id: str) -> list[str]:
@@ -141,6 +159,7 @@ def create(
     source_type: str = "manual",
     source_ref: str | None = None,
     pinned: bool = False,
+    project: str | None = None,
 ) -> Fragment:
     """Insert a new fragment. Returns the hydrated Fragment.
 
@@ -168,11 +187,11 @@ def create(
             """
             INSERT INTO fragments
                 (id, content, summary, source_type, source_ref,
-                 confidence, accessed, created_at, updated_at, pinned)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                 confidence, accessed, created_at, updated_at, pinned, project)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
             """,
             (fid, content, summary, source_type, source_ref,
-             config.CONFIDENCE_INIT, now, now, 1 if pinned else 0),
+             config.CONFIDENCE_INIT, now, now, 1 if pinned else 0, project),
         )
         if canonical_tags:
             conn.executemany(
@@ -210,10 +229,15 @@ def update_fields(
     below_threshold_since: str | None | bool = False,  # False = don't touch, None = clear, str = set
     add_tags: Sequence[str] = (),
     remove_tags: Sequence[str] = (),
+    project: str | None | bool = False,  # False = don't touch, None = global, str = set
 ) -> Fragment | None:
     """Partial update. Mirror is refreshed after the transaction commits."""
     sets: list[str] = []
     params: list = []
+
+    if project is not False:
+        sets.append("project = ?")
+        params.append(project)
 
     if content is not None:
         sets.append("content = ?")
@@ -287,22 +311,30 @@ def archive(fragment_id: str) -> bool:
     return deleted
 
 
-def search_fts(query: str, limit: int = 20, min_confidence: float = 0.0) -> list[Fragment]:
+def search_fts(
+    query: str,
+    limit: int = 20,
+    min_confidence: float = 0.0,
+    *,
+    project: str | None = None,
+    scope: str = "all",
+) -> list[Fragment]:
     """Full-text search. Returns ordered by FTS rank first, then confidence."""
     if not query.strip():
         return []
+    clause, extra = scope_clause(project, scope)
     with get_ro_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT f.*
             FROM fragments_fts
             JOIN fragments f ON f.rowid = fragments_fts.rowid
             WHERE fragments_fts MATCH ?
-              AND f.confidence >= ?
+              AND f.confidence >= ?{clause}
             ORDER BY fragments_fts.rank, f.confidence DESC
             LIMIT ?
             """,
-            (query, min_confidence, limit),
+            (query, min_confidence, *extra, limit),
         ).fetchall()
         frags: list[Fragment] = []
         for row in rows:
@@ -337,11 +369,17 @@ def list_all(
     min_confidence: float = 0.0,
     limit: int = 200,
     include_pinned: bool = True,
+    *,
+    project: str | None = None,
+    scope: str = "all",
 ) -> list[Fragment]:
     query = "SELECT * FROM fragments WHERE confidence >= ?"
     params: list = [min_confidence]
     if not include_pinned:
         query += " AND pinned = 0"
+    clause, extra = scope_clause(project, scope, alias="")
+    query += clause
+    params.extend(extra)
     query += " ORDER BY confidence DESC, last_accessed_at DESC LIMIT ?"
     params.append(limit)
     with get_ro_conn() as conn:
@@ -365,3 +403,21 @@ def iter_all() -> Iterable[Fragment]:
         for row in conn.execute("SELECT * FROM fragments").fetchall():
             tags = _fetch_tags(conn, row["id"])
             yield _row_to_fragment(row, tags, [])
+
+
+def ids_in_scope(project: str | None, scope: str) -> set[str] | None:
+    """Fragment ids visible in scope, or None when everything is visible."""
+    if scope == "all":
+        return None
+    clause, extra = scope_clause(project, scope, alias="")
+    with get_ro_conn() as conn:
+        rows = conn.execute(f"SELECT id FROM fragments WHERE 1=1{clause}", extra).fetchall()
+    return {r["id"] for r in rows}
+
+
+def project_counts() -> dict[str, int]:
+    with get_ro_conn() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(project, '') AS p, COUNT(*) AS n FROM fragments GROUP BY p ORDER BY n DESC"
+        ).fetchall()
+    return {r["p"] or "(global)": int(r["n"]) for r in rows}
