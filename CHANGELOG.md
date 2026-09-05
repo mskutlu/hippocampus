@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Changed — V11 follow-ups: recall latency, Pi parity, sync efficiency
+
+- `recall` p95 372 ms → 85 ms on the production database (1,921 fragments,
+  36k associations). Two causes fixed: the association lookup used
+  `fragment_a = ? OR fragment_b = ?` with no index on `fragment_b`, forcing a
+  full scan on every hydrated fragment (migration `013_assoc_index.sql` adds
+  both indexes and the query is now two indexed lookups); and semantic
+  ranking was a pure-Python cosine loop, now one numpy matrix multiply over a
+  per-process cached, normalized matrix (3 ms for 20 hits). Python fallback
+  kept for installs without numpy.
+- Pi extension: tool schemas are no longer hand-mirrored. `hippo register`
+  writes `tools.json` from the server's `TOOL_SPECS` (all 26 tools, including
+  `mark` and `wiki_*`, previously 16) and `index.ts` registers from it.
+- Sync: embeddings produced after a fragment was pushed (reindex) now sync
+  on their own; associations travel as one batched op per 500 pairs instead
+  of one op per pair; and ops applied from a pull are not echoed back
+  (`sync_applied` signatures, migration `012_sync_applied.sql`). First push
+  from this machine dropped from ~30k ops to ~1.3k.
+- `hippo doctor` runs the audit and prints saturation, noise, coverage, and
+  stale-session counts, warning on the same thresholds as `hippo audit`.
+
 ### Added — V11 Phase 3: device sync via a self-hosted endpoint (plan: `plans/v11/`)
 
 - `hippo sync serve` runs a small FastAPI oplog server (`sync.db`, one static

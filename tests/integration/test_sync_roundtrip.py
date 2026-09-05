@@ -129,3 +129,58 @@ def test_offline_push_is_quiet_and_recorded(hippo_env):
     assert "connection refused" in (sync.status()["last_error"] or "")
     with pytest.raises(SyncError):
         sync.sync(down)
+
+
+def test_embedding_only_change_syncs_and_no_echo(hippo_env, tmp_path, monkeypatch, server):
+    _, transport = server
+    from hippocampus.sync import client as sync
+    from hippocampus.storage import fragments as F, associations
+    from hippocampus.embeddings import store
+
+    model = "BAAI/bge-small-en-v1.5"
+    monkeypatch.setenv("HIPPO_EMBEDDING_MODEL", model)
+    a = Device("a", tmp_path, monkeypatch)
+    b = Device("b", tmp_path, monkeypatch)
+
+    with a:
+        f1 = F.create("one", summary="one")
+        f2 = F.create("two", summary="two")
+        associations.strengthen(f1.id, f2.id)
+        sync.sync(transport)
+        # reindex after the push: only the embedding changes
+        store.put(f1.id, [1.0, 0.0, 0.0], model=model)
+        out = sync.sync(transport)
+        assert out["push"]["pushed"] == 1
+
+    with b:
+        out = sync.sync(transport)
+        assert store.get(f1.id) is not None and store.get(f1.id)[0] == [1.0, 0.0, 0.0]
+        assert out["pull"]["associations"] == 1
+        # nothing B received is echoed back
+        again = sync.sync(transport)
+        assert again["push"]["pushed"] == 0
+        # a real local change on B still travels
+        F.update_fields(f2.id, pinned=True)
+        assert sync.sync(transport)["push"]["pushed"] == 1
+
+    with a:
+        out = sync.sync(transport)
+        assert F.get(f2.id).pinned is True
+        assert sync.sync(transport)["push"]["pushed"] == 0
+
+
+def test_association_ops_are_batched(hippo_env, tmp_path, monkeypatch, server):
+    client, transport = server
+    from hippocampus.sync import client as sync
+    from hippocampus.storage import fragments as F, associations
+
+    a = Device("a", tmp_path, monkeypatch)
+    with a:
+        ids = [F.create(f"f{i}", summary=f"f{i}").id for i in range(12)]
+        associations.strengthen_all(ids)  # 66 pairs
+        out = sync.sync(transport)
+        assert out["push"]["pushed"] == 12 + 1  # 12 fragments + one associations batch
+    r = client.get("/v1/pull?since=0&device=other", headers={"Authorization": f"Bearer {TOKEN}"}).json()
+    kinds = [op["entity"] for op in r["ops"]]
+    assert kinds.count("associations") == 1 and "association" not in kinds
+    assert len(next(op for op in r["ops"] if op["entity"] == "associations")["payload"]["pairs"]) == 66

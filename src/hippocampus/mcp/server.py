@@ -455,6 +455,19 @@ TOOL_SPECS: list[Tool] = [
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+def tools_manifest() -> list[dict[str, Any]]:
+    """JSON-serialisable view of TOOL_SPECS for non-MCP clients (Pi)."""
+    out: list[dict[str, Any]] = []
+    for tool in TOOL_SPECS:
+        out.append({
+            "name": tool.name,
+            "label": tool.name.replace("_", " ").capitalize(),
+            "description": tool.description or "",
+            "inputSchema": tool.inputSchema,
+        })
+    return out
+
+
 TOOL_DISPATCH = {
     "recall": T.recall,
     "remember": T.remember,

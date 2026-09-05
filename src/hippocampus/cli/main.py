@@ -182,6 +182,23 @@ def doctor() -> None:
     except Exception as e:  # noqa: BLE001
         warn.append(f"hooks: status failed ({e})")
 
+    # Memory health (V11) — same thresholds as `hippo audit`
+    try:
+        from hippocampus import maintenance
+
+        report = maintenance.audit()
+        m = report["metrics"]
+        summary = (
+            f"audit: {m['fragments_total']} fragments, saturated={m['saturated_ratio']:.0%}, "
+            f"noise={m['noise_fragments']}, coverage={m['embedding_coverage']:.0%}, stale_sessions={m['stale_sessions']}"
+        )
+        if report["ok"]:
+            ok.append(summary)
+        else:
+            warn.append(summary + "  breaches: " + "; ".join(report["breaches"]) + "  (see `hippo audit`)")
+    except Exception as e:  # noqa: BLE001
+        warn.append(f"audit: failed ({e})")
+
     # Device sync (V11)
     try:
         from hippocampus.sync import client as sync_client

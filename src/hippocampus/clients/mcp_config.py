@@ -266,6 +266,18 @@ def _install_pi_extension(spec: ClientSpec) -> tuple[bool, str]:
         target.write_text(body, encoding="utf-8")
         rendered.append(target.name)
 
+    # Tool manifest generated from the server's TOOL_SPECS so the extension
+    # never drifts from the MCP surface (V11).
+    import json as _json
+
+    from hippocampus.mcp.server import tools_manifest
+
+    manifest_path = dest / "tools.json"
+    manifest_body = _json.dumps(tools_manifest(), indent=2, ensure_ascii=False) + "\n"
+    if not manifest_path.exists() or manifest_path.read_text(encoding="utf-8") != manifest_body:
+        manifest_path.write_text(manifest_body, encoding="utf-8")
+        rendered.append(manifest_path.name)
+
     if rendered:
         return True, f"{spec.name}: installed extension at {dest} ({', '.join(rendered)})"
     return False, f"{spec.name}: extension already current at {dest}"

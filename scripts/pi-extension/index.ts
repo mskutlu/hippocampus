@@ -25,6 +25,8 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 
@@ -268,145 +270,29 @@ function hippoContext(query: string | undefined, event: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Tool schemas — mirror src/hippocampus/mcp/server.py exactly
+// Tool schemas — loaded from tools.json, which `hippo register` generates
+// from src/hippocampus/mcp/server.py TOOL_SPECS. No hand-mirrored list.
 // ---------------------------------------------------------------------------
 
-const ProgressKind = Type.Union([
-	Type.Literal("goal"),
-	Type.Literal("ask"),
-	Type.Literal("done"),
-	Type.Literal("blocker"),
-	Type.Literal("decision"),
-	Type.Literal("next"),
-	Type.Literal("note"),
-]);
+interface ToolManifestEntry {
+	name: string;
+	label: string;
+	description: string;
+	inputSchema: Record<string, unknown>;
+}
 
-const TOOL_SCHEMAS = {
-	recall: Type.Object({
-		query: Type.String({ description: "Free-text FTS query" }),
-		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
-		min_confidence: Type.Optional(Type.Number({ minimum: 0.0, maximum: 1.0 })),
-		context_tag: Type.Optional(
-			Type.String({ description: "Optional tag (e.g. 'debugging') added to every hit" }),
-		),
-	}),
-	remember: Type.Object({
-		content: Type.String({ description: "The synthesized fragment content" }),
-		summary: Type.Optional(Type.String({ description: "One-line summary (optional; auto if blank)" })),
-		tags: Type.Optional(Type.Array(Type.String())),
-		source_type: Type.Optional(Type.String({ description: "e.g. 'session', 'decision', 'manual'" })),
-		source_ref: Type.Optional(Type.String({ description: "Pointer to origin (path, URL, session id)" })),
-		pinned: Type.Optional(Type.Boolean({ description: "Shield from decay" })),
-	}),
-	forget: Type.Object({
-		fragment_id: Type.String(),
-		reason: Type.Optional(Type.String()),
-	}),
-	pin: Type.Object({ fragment_id: Type.String() }),
-	unpin: Type.Object({ fragment_id: Type.String() }),
-	get_fragment: Type.Object({
-		fragment_id: Type.String(),
-		boost_on_read: Type.Optional(Type.Boolean()),
-	}),
-	list_fragments: Type.Object({
-		tag: Type.Optional(Type.String()),
-		min_confidence: Type.Optional(Type.Number()),
-		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
-	}),
-	top_fragments: Type.Object({
-		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-	}),
-	get_stats: Type.Object({}),
-	log_progress: Type.Object({
-		kind: ProgressKind,
-		content: Type.String({ description: "One-line synthesis of the event (not raw user text)." }),
-		details: Type.Optional(Type.String({ description: "Optional longer context." })),
-	}),
-	get_progress: Type.Object({
-		full: Type.Optional(Type.Boolean()),
-		client: Type.Optional(Type.String()),
-	}),
-	get_handoff: Type.Object({
-		client: Type.Optional(Type.String()),
-	}),
-	log_transcript: Type.Object({
-		role: Type.Union([
-			Type.Literal("user"),
-			Type.Literal("assistant"),
-			Type.Literal("assistant_summary"),
-			Type.Literal("reasoning_summary"),
-			Type.Literal("system"),
-			Type.Literal("tool"),
-		]),
-		content: Type.String(),
-		source_event: Type.Optional(Type.String()),
-		metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-		client: Type.Optional(Type.String()),
-	}),
-	get_transcript: Type.Object({
-		client: Type.Optional(Type.String()),
-		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
-	}),
-	end_progress: Type.Object({
-		distill_to_fragment: Type.Optional(Type.Boolean()),
-		summary: Type.Optional(Type.String()),
-		tags: Type.Optional(Type.Array(Type.String())),
-	}),
-	undo_last_entry: Type.Object({
-		client: Type.Optional(Type.String()),
-	}),
-} as const;
+function loadToolManifest(): ToolManifestEntry[] {
+	const path = fileURLToPath(new URL("./tools.json", import.meta.url));
+	const raw = readFileSync(path, "utf-8");
+	const parsed = JSON.parse(raw) as ToolManifestEntry[];
+	if (!Array.isArray(parsed) || parsed.length === 0) {
+		throw new Error(`hippocampus: ${path} is empty — re-run 'hippo register'`);
+	}
+	return parsed;
+}
 
-type ToolName = keyof typeof TOOL_SCHEMAS;
-
-const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
-	recall:
-		"Search synthesized memory fragments. Every returned fragment is boosted (+0.015 confidence, access counter +1, co-access associations strengthened, context_tag attached). Use this when you need to retrieve what you or the user already knows.",
-	remember:
-		"Store a synthesized fragment (NOT raw conversation). Only distilled, atomic ideas belong here. New fragments start at confidence=0.5.",
-	forget:
-		"Apply negative feedback to a fragment (-0.02 confidence). Use when a recalled fragment turns out to be wrong or stale.",
-	pin: "Mark a fragment as pinned so it never decays.",
-	unpin: "Remove the pinned flag from a fragment.",
-	get_fragment: "Read a single fragment by id. Boosts confidence unless boost_on_read=false.",
-	list_fragments: "Administrative listing (no boost). Filter by tag and/or minimum confidence.",
-	top_fragments:
-		"Return the top-N highest-ranking fragments (by confidence × recency). Used for auto-injection; does not apply boost.",
-	get_stats: "Health dashboard: counts, average confidence, recent feedback events.",
-	log_progress:
-		"WORKING MEMORY — append one entry to the current session's ledger. Call this reflexively: every ask -> log_progress(kind='ask', ...); every completed action -> kind='done'; decisions -> 'decision'; blockers -> 'blocker'; planned next steps -> 'next'; goal changes -> 'goal'; other context -> 'note'. The entry survives compaction because the WORKING block is re-injected into the client's always-on rules file on every turn. Any frag_... ids referenced in content are boosted as if recalled. Dedup window: identical entries within 60s are merged.",
-	get_progress:
-		"Return the current session's ledger (or full history). Call this when you need more detail than the injected WORKING block shows.",
-	get_handoff:
-		"Return the session's handoff document — a full, continuously-updated markdown snapshot of the task (main goal, done, blockers, decisions, next steps). Call after any context compaction/summarization, or when resuming work, to re-anchor on the authoritative main goal.",
-	log_transcript:
-		"Store raw/visible transcript content for the current session. Use user for raw prompts, assistant for visible responses, and reasoning_summary for concise visible reasoning summaries. Do not store hidden chain-of-thought.",
-	get_transcript:
-		"Return raw/visible transcript rows for the current session.",
-	end_progress:
-		"Close the current session and optionally distill the whole ledger into a single long-term fragment. Call this when the task is complete. The next log_progress call will start a fresh session.",
-	undo_last_entry:
-		"Pop the most recent ledger entry from the current session. Use this to correct a log_progress mistake. Refuses if the entry is older than 5 minutes — use end_progress for older corrections.",
-};
-
-const TOOL_LABELS: Record<ToolName, string> = {
-	recall: "Recall",
-	remember: "Remember",
-	forget: "Forget",
-	pin: "Pin",
-	unpin: "Unpin",
-	get_fragment: "Get fragment",
-	list_fragments: "List fragments",
-	top_fragments: "Top fragments",
-	get_stats: "Hippocampus stats",
-	log_progress: "Log progress",
-	get_progress: "Get progress",
-	get_handoff: "Get handoff",
-	log_transcript: "Log transcript",
-	get_transcript: "Get transcript",
-	end_progress: "End progress",
-	undo_last_entry: "Undo last entry",
-};
+const TOOL_MANIFEST = loadToolManifest();
+type ToolName = string;
 
 // ---------------------------------------------------------------------------
 // Extension entry point
@@ -415,11 +301,13 @@ const TOOL_LABELS: Record<ToolName, string> = {
 export default function hippocampus(pi: ExtensionAPI) {
 	const mcp = new McpClient();
 
-	function registerHippocampusTool<TParams extends TSchema>(name: ToolName, schema: TParams) {
+	function registerHippocampusTool(entry: ToolManifestEntry) {
+		const name: ToolName = entry.name;
+		const schema = Type.Unsafe<Record<string, unknown>>(entry.inputSchema) as TSchema;
 		pi.registerTool({
 			name,
-			label: TOOL_LABELS[name],
-			description: TOOL_DESCRIPTIONS[name],
+			label: entry.label,
+			description: entry.description,
 			parameters: schema,
 			async execute(_toolCallId, params) {
 				try {
@@ -440,9 +328,7 @@ export default function hippocampus(pi: ExtensionAPI) {
 		});
 	}
 
-	(Object.keys(TOOL_SCHEMAS) as ToolName[]).forEach((name) => {
-		registerHippocampusTool(name, TOOL_SCHEMAS[name] as TSchema);
-	});
+	TOOL_MANIFEST.forEach((entry) => registerHippocampusTool(entry));
 
 	// -----------------------------------------------------------------------
 	// Lifecycle hooks

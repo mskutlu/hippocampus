@@ -1,7 +1,8 @@
 """Cosine-similarity search + upsert helpers.
 
-Uses plain Python math to avoid a numpy dep in the base install. For <10k
-fragments on modern hardware a linear scan is well under 100 ms per query.
+Ranking uses one numpy matrix multiply over a normalized, in-process cached
+matrix (numpy ships with every embedding provider). The pure-Python path is
+kept only as a fallback when numpy is unavailable.
 """
 
 from __future__ import annotations
@@ -112,6 +113,67 @@ def reindex(force: bool = False, batch: int = 64) -> dict:
     }
 
 
+_MATRIX_CACHE: dict[str, tuple[tuple[int, str], list[str], "object"]] = {}
+
+
+def _matrix_for(model: str):
+    """(ids, normalized float32 matrix) for `model`, cached per process.
+
+    The cache key is (row count, newest created_at) so any put/delete since
+    the last call rebuilds it; the check is one cheap aggregate query.
+    """
+    import numpy as np
+
+    from hippocampus.storage.db import get_ro_conn
+
+    with get_ro_conn() as conn:
+        sig_row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(created_at), '') AS t FROM fragment_embeddings WHERE model = ?",
+            (model,),
+        ).fetchone()
+        sig = (int(sig_row["n"]), str(sig_row["t"]))
+        cached = _MATRIX_CACHE.get(model)
+        if cached and cached[0] == sig:
+            return cached[1], cached[2]
+        rows = conn.execute(
+            "SELECT fragment_id, vector, dim FROM fragment_embeddings WHERE model = ?", (model,)
+        ).fetchall()
+    if not rows:
+        _MATRIX_CACHE[model] = (sig, [], None)
+        return [], None
+    dim = int(rows[0]["dim"])
+    ids = [r["fragment_id"] for r in rows if int(r["dim"]) == dim]
+    buf = b"".join(bytes(r["vector"]) for r in rows if int(r["dim"]) == dim)
+    mat = np.frombuffer(buf, dtype=np.float32).reshape(len(ids), dim).astype(np.float32, copy=True)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    mat /= norms
+    _MATRIX_CACHE[model] = (sig, ids, mat)
+    return ids, mat
+
+
+def _topk_numpy(q_vec: list[float], model: str, k: int, allowed_ids: set[str] | None) -> list[tuple[str, float]]:
+    import numpy as np
+
+    ids, mat = _matrix_for(model)
+    if mat is None or not ids:
+        return []
+    q = np.asarray(q_vec, dtype=np.float32)
+    qn = float(np.linalg.norm(q))
+    if qn == 0:
+        return []
+    scores = mat @ (q / qn)
+    if allowed_ids is not None:
+        mask = np.fromiter((fid in allowed_ids for fid in ids), dtype=bool, count=len(ids))
+        scores = np.where(mask, scores, -np.inf)
+    n = min(k, len(ids))
+    if n <= 0:
+        return []
+    top = np.argpartition(-scores, n - 1)[:n]
+    top = top[np.argsort(-scores[top])]
+    return [(ids[i], float(scores[i])) for i in top if np.isfinite(scores[i])]
+
+
 def semantic_topk(
     query: str,
     k: int = 5,
@@ -134,6 +196,11 @@ def semantic_topk(
     except Exception as e:  # noqa: BLE001
         log.warning("query embed failed: %s", e)
         return []
+
+    try:
+        return _topk_numpy(q_vec, provider.model, k, allowed_ids)
+    except ImportError:
+        pass
 
     results: list[tuple[str, float]] = []
     for fid, vec, _ in vstore.iter_all(model=provider.model):

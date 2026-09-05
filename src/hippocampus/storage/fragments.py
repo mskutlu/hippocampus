@@ -139,15 +139,18 @@ def _fetch_tags(conn: sqlite3.Connection, fragment_id: str) -> list[str]:
 
 
 def _fetch_associations(conn: sqlite3.Connection, fragment_id: str, limit: int = 20) -> list[str]:
+    # Two indexed lookups instead of an OR that forces a full scan.
     rows = conn.execute(
         """
-        SELECT CASE WHEN fragment_a = ? THEN fragment_b ELSE fragment_a END AS other
-        FROM associations
-        WHERE fragment_a = ? OR fragment_b = ?
+        SELECT other FROM (
+            SELECT fragment_b AS other, weight FROM associations WHERE fragment_a = ?
+            UNION ALL
+            SELECT fragment_a AS other, weight FROM associations WHERE fragment_b = ?
+        )
         ORDER BY weight DESC
         LIMIT ?
         """,
-        (fragment_id, fragment_id, fragment_id, limit),
+        (fragment_id, fragment_id, limit),
     ).fetchall()
     return [r["other"] for r in rows]
 
