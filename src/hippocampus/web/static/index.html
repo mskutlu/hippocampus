@@ -195,10 +195,12 @@
       <h2>Fragments</h2>
       <div class="row">
         <input type="text" id="frag-tag" placeholder="tag filter" />
+        <input type="text" id="frag-project" placeholder="project (or 'global')" list="project-list" />
+        <datalist id="project-list"></datalist>
         <input type="number" id="frag-min" step="0.05" value="0" min="0" max="1" style="width:80px" />
         <button class="act" onclick="loadFragments()">Refresh</button>
       </div>
-      <table id="frag-table" style="margin-top:12px;"><thead><tr><th>conf</th><th>acc</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
+      <table id="frag-table" style="margin-top:12px;"><thead><tr><th>conf</th><th>acc</th><th>project</th><th>summary</th><th>tags</th><th>pin</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 
@@ -398,19 +400,26 @@ async function runRecall() {
 
 async function loadFragments() {
   const tag = document.getElementById('frag-tag').value || null;
+  const project = document.getElementById('frag-project').value || '';
   const mc = parseFloat(document.getElementById('frag-min').value) || 0;
-  const res = await api(`/api/fragments?tag=${encodeURIComponent(tag || '')}&min_confidence=${mc}&limit=200`);
+  try {
+    const pj = await api('/api/projects');
+    document.getElementById('project-list').innerHTML =
+      ['global', ...Object.keys(pj.projects || {})].map(n => `<option value="${escapeHtml(n)}">`).join('');
+  } catch (e) {}
+  const res = await api(`/api/fragments?tag=${encodeURIComponent(tag || '')}&project=${encodeURIComponent(project)}&min_confidence=${mc}&limit=200`);
   const tbody = document.querySelector('#frag-table tbody');
   tbody.innerHTML = res.fragments.map(f => {
     const { tags, pin } = renderFragmentCell(f);
     return `<tr onclick="openFragment('${f.id}')" style="cursor:pointer">
       <td>${f.confidence.toFixed(2)}</td>
       <td>${f.accessed}</td>
+      <td>${escapeHtml(f.project || '')}</td>
       <td>${escapeHtml(f.summary || f.content.slice(0,80))}</td>
       <td>${tags}</td>
       <td>${pin}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="5"><em>no fragments</em></td></tr>';
+  }).join('') || '<tr><td colspan="6"><em>no fragments</em></td></tr>';
 }
 
 async function loadTriage() {

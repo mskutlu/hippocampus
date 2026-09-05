@@ -243,17 +243,28 @@ def _latest_open_session(client: str, session_key: str) -> str | None:
     return row["id"] if row else None
 
 
+def resolve_project() -> str | None:
+    """Project for this process: workspace root for GUI clients, else cwd."""
+    try:
+        from hippocampus import projects
+
+        return projects.resolve(_detect_workspace() or _detect_cwd())
+    except Exception:
+        return None
+
+
 def open_session(client: str, session_key: str | None = None) -> str:
     """Open or reuse the active session for a client/context."""
     client = _clean_client(client)
     key = derive_session_key(session_key)
     config.ensure_dirs()
     sid = f"sess_{ULID()}"
+    project = resolve_project()
     try:
         with get_conn() as conn:
             conn.execute(
-                "INSERT INTO sessions (id, client, session_key, started_at) VALUES (?, ?, ?, ?)",
-                (sid, client, key, _now()),
+                "INSERT INTO sessions (id, client, session_key, started_at, project) VALUES (?, ?, ?, ?, ?)",
+                (sid, client, key, _now(), project),
             )
     except sqlite3.IntegrityError:
         active = _latest_open_session(client, key)
@@ -288,6 +299,24 @@ def rotate(client: str, session_key: str | None = None) -> str:
     except RuntimeError:
         pass
     return open_session(client_name, session_key=key)
+
+
+def session_project(session_id: str) -> str | None:
+    with get_ro_conn() as conn:
+        row = conn.execute("SELECT project FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return row["project"] if row else None
+
+
+def current_project(client: str) -> str | None:
+    """Project of the active session, else resolved from the environment."""
+    try:
+        sid = current_session_id(client, open_if_missing=False)
+        found = session_project(sid)
+        if found:
+            return found
+    except RuntimeError:
+        pass
+    return resolve_project()
 
 
 def close_session(session_id: str) -> bool:

@@ -23,7 +23,7 @@ def test_log_progress_boosts_semantic_match(hippo_env, monkeypatch):
     monkeypatch.setattr(
         semantic_search,
         "semantic_topk",
-        lambda query, k=5: [(fid, 0.91)],
+        lambda query, k=5, **kw: [(fid, 0.91)],
     )
     before = F.get(fid).confidence
 
@@ -56,7 +56,7 @@ def test_log_progress_no_explicit_id_still_boosts(hippo_env, monkeypatch):
     monkeypatch.setattr(
         semantic_search,
         "semantic_topk",
-        lambda query, k=5: [(fid, 0.91)],
+        lambda query, k=5, **kw: [(fid, 0.91)],
     )
     before = F.get(fid).confidence
 

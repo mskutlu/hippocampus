@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — V11 Phase 2: project scoping (plan: `plans/v11/`)
+
+- `~/.hippocampus/projects.json` maps git remotes, path globs, and tag aliases
+  to a project name. Resolution order: `HIPPOCAMPUS_PROJECT`, a
+  `.hippocampus-project` marker file, remote rule, path rule, else global.
+  Migration `010_projects.sql` adds `fragments.project` and `sessions.project`.
+- Sessions record their project at open. `remember`, autoremember, and both
+  distillation paths stamp it; `remember(scope="global")` stores a
+  project-less fragment visible everywhere.
+- `recall` defaults to `scope="project"` (current project + global). Both FTS
+  and semantic candidates are filtered before ranking so hidden projects do
+  not consume result slots. `scope="all"` searches everything.
+- Injection is split: rules files carry global fragments only; the hook
+  payload carries the current project's fragments and names the project in
+  its header. `log_progress` auto-boost is scoped the same way.
+- New CLI group `hippo project list|add|detect|assign|backfill`. Web UI gains
+  a project column and filter plus `/api/projects`.
+
 ### Changed — V11 Phase 1: memory quality (plan: `plans/v11/`)
 
 An audit of a 5-month production database (1308 fragments, 152 MB) found the

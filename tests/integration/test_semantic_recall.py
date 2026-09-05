@@ -149,7 +149,7 @@ def test_rrf_consensus_beats_single_source(hippo_env, monkeypatch):
 
     monkeypatch.setattr(F, "search_fts", lambda **kw: [a, b])
     monkeypatch.setattr(
-        semantic_search, "semantic_topk", lambda q, k=5: [(c.id, 0.42), (b.id, 0.40)]
+        semantic_search, "semantic_topk", lambda q, k=5, **kw: [(c.id, 0.42), (b.id, 0.40)]
     )
     monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "pytest")
 
@@ -171,7 +171,7 @@ def test_semantic_weight_can_be_zero(hippo_env, monkeypatch):
     monkeypatch.setattr(
         semantic_search,
         "semantic_topk",
-        lambda query, k=5: [(semantic_hit.id, 0.99)],
+        lambda query, k=5, **kw: [(semantic_hit.id, 0.99)],
     )
     monkeypatch.setenv("HIPPO_SEMANTIC_WEIGHT", "0")
 

@@ -49,14 +49,27 @@ def ranked_score(frag: frag_store.Fragment, now: datetime | None = None) -> floa
     return min(1.0, score)
 
 
-def top_n(limit: int | None = None, min_confidence: float = 0.0) -> list[frag_store.Fragment]:
-    """Return highest-scoring fragments for injection. Pinned always included first."""
+def top_n(
+    limit: int | None = None,
+    min_confidence: float = 0.0,
+    *,
+    project: str | None = None,
+    scope: str = "all",
+) -> list[frag_store.Fragment]:
+    """Return highest-scoring fragments for injection.
+
+    scope='global' -> only project-less fragments (rules file block)
+    scope='project' -> current project + global (hook payload)
+    scope='all' -> everything (legacy behaviour)
+    """
     n = limit if limit is not None else config.TOP_N_DEFAULT
     now = datetime.now(timezone.utc)
 
     # Fetch a generous candidate pool; then rank in Python so we can apply the
     # full score (SQLite's math functions are patchy across builds).
-    pool = frag_store.list_all(min_confidence=min_confidence, limit=max(200, n * 4))
+    pool = frag_store.list_all(
+        min_confidence=min_confidence, limit=max(200, n * 4), project=project, scope=scope
+    )
     scored = [(ranked_score(f, now), f) for f in pool]
 
     # Stable two-pass sort: newest access breaks score ties (V11), then score.

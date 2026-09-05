@@ -175,7 +175,7 @@ def _fragment_section(
 
     if not fragments_by_id:
         try:
-            top_out = T.top_fragments(limit=limit)
+            top_out = T.top_fragments(limit=limit, scope="project")
             _add_hits(top_out.get("fragments") or [])
         except Exception:
             pass
@@ -193,6 +193,13 @@ def _fragment_section(
         if query and query.strip()
         else "## Top long-term memories right now"
     )
+    project = None
+    try:
+        project = sessions.current_project(client) if client else None
+    except Exception:
+        project = None
+    if project:
+        header += f" (project `{project}` + global)"
     out: list[str] = [header, ""]
     for f in fragments:
         conf = f"{f.get('confidence', 0.0):.2f}"

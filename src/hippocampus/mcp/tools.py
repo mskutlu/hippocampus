@@ -69,6 +69,13 @@ def _as_dict(frag) -> dict[str, Any]:
 _RRF_K = 60  # standard RRF constant
 
 
+def _current_project(client: str | None = None) -> str | None:
+    try:
+        return sessions.current_project(_client_name(client))
+    except Exception:
+        return None
+
+
 def _rrf(rank: int | None) -> float:
     """Reciprocal-rank contribution for a 1-based rank; 0 when absent."""
     return 1.0 / (_RRF_K + rank) if rank else 0.0
@@ -80,9 +87,13 @@ def recall(
     min_confidence: float = 0.0,
     context_tag: str | None = None,
     boost: bool = True,
+    scope: str = "project",
 ) -> dict[str, Any]:
     """Hybrid FTS + semantic search. Every returned hit is boosted unless
     `boost=False` (used by hook injection, which is not a real access).
+
+    `scope='project'` (default) returns the current project's fragments plus
+    global ones; `scope='all'` searches every project (V11).
 
     Candidates are fused with weighted Reciprocal Rank Fusion (RRF):
         final = (1 - semantic_weight) / (60 + fts_rank)
@@ -96,13 +107,15 @@ def recall(
     _ensure_bootstrapped()
 
     pool_size = max(limit * 4, limit + 3)
+    scope = scope if scope in ("project", "all", "global") else "project"
+    project = _current_project() if scope == "project" else None
 
     # --- FTS candidates -----------------------------------------------------
     # FTS5 has its own syntax (column:value, hyphens, quotes, parentheses, etc).
     # Free-text user queries can trip the parser; degrade to semantic-only on error.
     try:
         fts_hits = frag_store.search_fts(
-            query=query, limit=pool_size, min_confidence=min_confidence
+            query=query, limit=pool_size, min_confidence=min_confidence, project=project, scope=scope
         )
     except Exception:
         # FTS parse error — fall back to semantic-only. Try a sanitised retry
@@ -111,7 +124,7 @@ def recall(
         sanitised = _re.sub(r"[^\w\s]", " ", query).strip()
         try:
             fts_hits = frag_store.search_fts(
-                query=sanitised, limit=pool_size, min_confidence=min_confidence
+                query=sanitised, limit=pool_size, min_confidence=min_confidence, project=project, scope=scope
             ) if sanitised else []
         except Exception:
             fts_hits = []
@@ -127,7 +140,9 @@ def recall(
     semantic_available = False
     try:
         from hippocampus.embeddings import search as semantic_search  # lazy
-        sem_hits = semantic_search.semantic_topk(query, k=pool_size)
+        sem_hits = semantic_search.semantic_topk(
+            query, k=pool_size, allowed_ids=frag_store.ids_in_scope(project, scope)
+        )
         for rank_idx, (fid, score) in enumerate(sem_hits):
             semantic_ranks[fid] = rank_idx + 1
             semantic_scores[fid] = max(0.0, float(score))
@@ -201,6 +216,7 @@ def recall(
                 "accessed": f.accessed,
                 "tags": f.tags,
                 "pinned": f.pinned,
+                "project": f.project,
                 "associated_with": f.associated_with,
                 "scores": {
                     "fts_rank": fts_ranks.get(f.id),
@@ -213,6 +229,8 @@ def recall(
     return {
         "query": query,
         "count": len(fragments_out),
+        "scope": scope,
+        "project": project,
         "semantic_available": semantic_available,
         "semantic_weight": round(w_sem, 2),
         "fragments": fragments_out,
@@ -226,12 +244,21 @@ def remember(
     source_type: str = "manual",
     source_ref: str | None = None,
     pinned: bool = False,
+    project: str | None = None,
+    scope: str = "project",
 ) -> dict[str, Any]:
+    """Store a fragment. It belongs to `project` (default: the current
+    session's project). `scope='global'` stores it without a project so it
+    is visible everywhere (V11)."""
     _ensure_bootstrapped()
 
     content = (content or "").strip()
     if not content:
         raise ValueError("content is required")
+    if scope == "global":
+        project = None
+    elif project is None:
+        project = _current_project()
 
     resolved_summary = (summary or "").strip()
     if not resolved_summary:
@@ -250,6 +277,7 @@ def remember(
         source_type=source_type,
         source_ref=source_ref,
         pinned=pinned,
+        project=project,
     )
     # Try to embed synchronously; failure is non-fatal (fragment already
     # stored, can be re-embedded later via `hippo reindex`).
@@ -320,21 +348,34 @@ def get_fragment(fragment_id: str, boost_on_read: bool = True) -> dict[str, Any]
 
 
 def list_fragments(
-    tag: str | None = None, min_confidence: float = 0.0, limit: int = 20
+    tag: str | None = None,
+    min_confidence: float = 0.0,
+    limit: int = 20,
+    project: str | None = None,
+    scope: str = "all",
 ) -> dict[str, Any]:
     _ensure_bootstrapped()
+    if scope == "project" and project is None:
+        project = _current_project()
     items = (
         frag_store.list_by_tag(tag, limit=limit)
         if tag
-        else frag_store.list_all(min_confidence=min_confidence, limit=limit)
+        else frag_store.list_all(min_confidence=min_confidence, limit=limit, project=project, scope=scope)
     )
+    if tag and scope != "all":
+        allowed = frag_store.ids_in_scope(project, scope) or set()
+        items = [f for f in items if f.id in allowed]
     return {"count": len(items), "fragments": [_as_dict(f) for f in items]}
 
 
-def top_fragments(limit: int | None = None) -> dict[str, Any]:
+def top_fragments(
+    limit: int | None = None, project: str | None = None, scope: str = "all"
+) -> dict[str, Any]:
     _ensure_bootstrapped()
-    items = ranking.top_n(limit=limit)
-    return {"count": len(items), "fragments": [_as_dict(f) for f in items]}
+    if scope == "project" and project is None:
+        project = _current_project()
+    items = ranking.top_n(limit=limit, project=project, scope=scope)
+    return {"count": len(items), "project": project, "scope": scope, "fragments": [_as_dict(f) for f in items]}
 
 
 def get_stats() -> dict[str, Any]:
@@ -565,7 +606,11 @@ def log_progress(
         if k > 0 and haystack.strip():
             from hippocampus.embeddings import search as semantic_search
 
-            hits = semantic_search.semantic_topk(haystack, k=max(k * 4, k))
+            hits = semantic_search.semantic_topk(
+                haystack,
+                k=max(k * 4, k),
+                allowed_ids=frag_store.ids_in_scope(sessions.session_project(session_id), "project"),
+            )
             keepers: list[str] = []
             for fragment_id, score in hits:
                 sem = float(score)
@@ -835,6 +880,7 @@ def end_progress(
             tags=list(tags or []) + ["session-summary", client_name],
             source_type="session-summary",
             source_ref=sid,
+            project=sessions.session_project(sid),
         )
         stored_fragment = _as_dict(frag)
 
@@ -890,6 +936,7 @@ def auto_end_idle_sessions() -> dict[str, Any]:
                     tags=["session-summary", client, "auto-distilled"],
                     source_type="session-summary",
                     source_ref=sid,
+                    project=sessions.session_project(sid),
                 )
                 distilled_id = frag.id
                 try:
