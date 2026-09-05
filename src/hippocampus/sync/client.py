@@ -114,11 +114,11 @@ def _fragment_payload(conn, row) -> dict[str, Any]:
 
 
 def collect_ops(since: str) -> list[dict[str, Any]]:
-    """Local changes newer than `since` (inclusive; ops are idempotent)."""
+    """Local changes strictly newer than `since` (microsecond timestamps)."""
     ops: list[dict[str, Any]] = []
     with get_ro_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM fragments WHERE updated_at >= ? OR COALESCE(last_accessed_at, '') >= ?",
+            "SELECT * FROM fragments WHERE updated_at > ? OR COALESCE(last_accessed_at, '') > ?",
             (since, since),
         ).fetchall()
         for row in rows:
@@ -128,12 +128,12 @@ def collect_ops(since: str) -> list[dict[str, Any]]:
                 "updated_at": max(row["updated_at"] or "", row["last_accessed_at"] or ""),
                 "payload": payload,
             })
-        for row in conn.execute("SELECT fragment_id, deleted_at FROM fragment_tombstones WHERE deleted_at >= ?", (since,)).fetchall():
+        for row in conn.execute("SELECT fragment_id, deleted_at FROM fragment_tombstones WHERE deleted_at > ?", (since,)).fetchall():
             ops.append({
                 "entity": "tombstone", "entity_id": row["fragment_id"], "op": "delete",
                 "updated_at": row["deleted_at"], "payload": {"deleted_at": row["deleted_at"]},
             })
-        for row in conn.execute("SELECT * FROM associations WHERE last_co_accessed_at >= ?", (since,)).fetchall():
+        for row in conn.execute("SELECT * FROM associations WHERE last_co_accessed_at > ?", (since,)).fetchall():
             ops.append({
                 "entity": "association", "entity_id": f"{row['fragment_a']}|{row['fragment_b']}", "op": "upsert",
                 "updated_at": row["last_co_accessed_at"], "payload": {k: row[k] for k in row.keys()},
@@ -141,7 +141,7 @@ def collect_ops(since: str) -> list[dict[str, Any]]:
     ppath = projects.projects_path()
     if ppath.exists():
         mtime = datetime.fromtimestamp(ppath.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        if mtime >= since:
+        if mtime > since:
             ops.append({
                 "entity": "config", "entity_id": "projects", "op": "upsert",
                 "updated_at": mtime, "payload": projects.load(),
