@@ -188,8 +188,18 @@ if [[ "$SYNC_SERVER" == "1" ]]; then
                 -e "s|__SYNC_PORT__|$SYNC_PORT|g" \
                 "$REPO_ROOT/scripts/com.hippocampus.sync-server.plist.template" > "$dst"
             launchctl bootout "gui/$(id -u)/com.hippocampus.sync-server" 2>/dev/null || true
-            launchctl bootstrap "gui/$(id -u)" "$dst"
-            echo "    loaded com.hippocampus.sync-server"
+            # bootstrap right after bootout can fail with I/O error 5 while
+            # launchd tears the old job down; retry briefly.
+            for attempt in 1 2 3 4 5; do
+                if launchctl bootstrap "gui/$(id -u)" "$dst" 2>/dev/null; then
+                    echo "    loaded com.hippocampus.sync-server"
+                    break
+                fi
+                if [[ "$attempt" == "5" ]]; then
+                    echo "    WARN: could not load com.hippocampus.sync-server; run: launchctl bootstrap gui/$(id -u) $dst"
+                fi
+                sleep 2
+            done
             ;;
         linux)
             mkdir -p "$HOME/.config/systemd/user"
