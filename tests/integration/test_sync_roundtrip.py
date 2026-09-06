@@ -56,6 +56,21 @@ def server(tmp_path):
     return client, transport
 
 
+def test_health_reports_device_lag(hippo_env, tmp_path, monkeypatch, server):
+    client, transport = server
+    from hippocampus.sync import client as sync
+    from hippocampus.storage import fragments as F
+
+    a = Device("a", tmp_path, monkeypatch)
+    with a:
+        F.create("x", summary="x")
+        sync.sync(transport)
+        dev = sync.device_id()
+    status = client.get("/v1/health").json()
+    row = next(d for d in status["device_status"] if d["device"] == dev)
+    assert row["last_push_at"] and row["last_pull_at"] and row["behind"] == 0
+
+
 def test_server_requires_token(server):
     client, _ = server
     assert client.get("/v1/health").status_code == 200
