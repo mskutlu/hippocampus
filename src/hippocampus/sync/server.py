@@ -69,7 +69,43 @@ def _connect(path: Path) -> sqlite3.Connection:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ops_device_seq ON ops(device, seq)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS devices (
+            device        TEXT PRIMARY KEY,
+            last_push_at  TEXT,
+            last_pull_at  TEXT,
+            last_pull_seq INTEGER
+        )
+        """
+    )
     return conn
+
+
+def _touch_device(conn: sqlite3.Connection, device: str, *, push: bool = False, pull_seq: int | None = None) -> None:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    conn.execute("INSERT OR IGNORE INTO devices(device) VALUES (?)", (device,))
+    if push:
+        conn.execute("UPDATE devices SET last_push_at = ? WHERE device = ?", (now, device))
+    if pull_seq is not None:
+        conn.execute("UPDATE devices SET last_pull_at = ?, last_pull_seq = ? WHERE device = ?", (now, pull_seq, device))
+
+
+def backfill_devices(path: Path) -> None:
+    """Seed the devices table from the oplog for servers created before it existed."""
+    with _connect(path) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO devices(device, last_push_at)
+            SELECT device, MAX(received_at) FROM ops GROUP BY device
+            """
+        )
+
+
+def list_devices(path: Path) -> list[dict[str, Any]]:
+    with _connect(path) as conn:
+        rows = conn.execute("SELECT * FROM devices ORDER BY device").fetchall()
+    return [dict(r) for r in rows]
 
 
 def append_ops(path: Path, device: str, ops: list[dict[str, Any]]) -> int:
@@ -83,6 +119,7 @@ def append_ops(path: Path, device: str, ops: list[dict[str, Any]]) -> int:
                 for o in ops
             ],
         )
+        _touch_device(conn, device, push=True)
         seq = conn.execute("SELECT MAX(seq) AS s FROM ops").fetchone()["s"]
     return int(seq or 0)
 
@@ -94,14 +131,15 @@ def read_ops(path: Path, since: int, exclude_device: str, limit: int = PULL_CAP)
             (since, exclude_device, limit + 1),
         ).fetchall()
         head = conn.execute("SELECT MAX(seq) AS s FROM ops").fetchone()["s"] or 0
-    more = len(rows) > limit
-    rows = rows[:limit]
-    ops = [
-        {"seq": r["seq"], "device": r["device"], "entity": r["entity"], "entity_id": r["entity_id"],
-         "op": r["op"], "updated_at": r["updated_at"], "payload": json.loads(r["payload"])}
-        for r in rows
-    ]
-    next_seq = ops[-1]["seq"] if ops else (since if more else int(head))
+        more = len(rows) > limit
+        rows = rows[:limit]
+        ops = [
+            {"seq": r["seq"], "device": r["device"], "entity": r["entity"], "entity_id": r["entity_id"],
+             "op": r["op"], "updated_at": r["updated_at"], "payload": json.loads(r["payload"])}
+            for r in rows
+        ]
+        next_seq = ops[-1]["seq"] if ops else (since if more else int(head))
+        _touch_device(conn, exclude_device, pull_seq=int(next_seq))
     return ops, int(next_seq), more
 
 
@@ -110,6 +148,7 @@ def create_app(*, token: str | None = None, db_path: Path | None = None) -> "Fas
         raise RuntimeError("sync server needs the web extra: uv pip install -e '.[web]'")
     expected = token or server_token()
     path = db_path or oplog_path()
+    backfill_devices(path)
     app = FastAPI(title="Hippocampus sync", docs_url=None, redoc_url=None)
 
     def auth(authorization: str | None = Header(default=None)) -> None:
@@ -120,8 +159,15 @@ def create_app(*, token: str | None = None, db_path: Path | None = None) -> "Fas
     def health() -> dict:
         with _connect(path) as conn:
             head = conn.execute("SELECT MAX(seq) AS s FROM ops").fetchone()["s"] or 0
-            devices = conn.execute("SELECT COUNT(DISTINCT device) AS d FROM ops").fetchone()["d"]
-        return {"ok": True, "head_seq": int(head), "devices": int(devices)}
+        devices = list_devices(path)
+        return {
+            "ok": True,
+            "head_seq": int(head),
+            "devices": len(devices),
+            "device_status": [
+                {**d, "behind": int(head) - int(d.get("last_pull_seq") or 0)} for d in devices
+            ],
+        }
 
     @app.post("/v1/push", dependencies=[Depends(auth)])
     def push(body: dict = Body(...)) -> dict:
