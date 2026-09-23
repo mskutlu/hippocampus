@@ -211,14 +211,16 @@ def _write_fragment(conn, merged: dict[str, Any]) -> None:
     conn.execute(
         """
         INSERT INTO fragments (id, content, summary, source_type, source_ref, confidence, accessed,
-                               last_accessed_at, created_at, updated_at, pinned, below_threshold_since, project)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               last_accessed_at, created_at, updated_at, pinned, below_threshold_since, project,
+                               review_state, superseded_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             content = excluded.content, summary = excluded.summary, source_type = excluded.source_type,
             source_ref = excluded.source_ref, confidence = excluded.confidence, accessed = excluded.accessed,
             last_accessed_at = excluded.last_accessed_at, created_at = excluded.created_at,
             updated_at = excluded.updated_at, pinned = excluded.pinned,
-            below_threshold_since = excluded.below_threshold_since, project = excluded.project
+            below_threshold_since = excluded.below_threshold_since, project = excluded.project,
+            review_state = excluded.review_state, superseded_by = excluded.superseded_by
         """,
         (
             merged["id"], merged.get("content") or "", merged.get("summary") or "",
@@ -226,6 +228,7 @@ def _write_fragment(conn, merged: dict[str, Any]) -> None:
             float(merged.get("confidence") or 0.0), int(merged.get("accessed") or 0),
             merged.get("last_accessed_at"), merged.get("created_at") or _now(), merged.get("updated_at") or _now(),
             1 if merged.get("pinned") else 0, merged.get("below_threshold_since"), merged.get("project"),
+            merged.get("review_state") or "approved", merged.get("superseded_by"),
         ),
     )
     conn.executemany(

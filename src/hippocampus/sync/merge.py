@@ -5,13 +5,22 @@ A fragment record is a plain dict with the `fragments` columns plus
 content/summary/pinned/project/tag changes, not by boosts), so "newer
 updated_at wins" is a real edit-ordering rule. Dynamics fields merge
 monotonically: accessed/confidence/last_accessed_at take the max.
+
+Records from peers that predate the review gate carry no `review_state` /
+`superseded_by`; the other side's value is kept, else a default is derived.
+A candidate is never pinned: a pin from such a peer carries no evidence
+that a human made it (same rule as migration 014).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-CONTENT_FIELDS = ("content", "summary", "source_type", "source_ref", "pinned", "project")
+from hippocampus.storage.fragments import default_review_state
+
+CONTENT_FIELDS = (
+    "content", "summary", "source_type", "source_ref", "pinned", "project", "review_state", "superseded_by",
+)
 ARCHIVE_THRESHOLD = 0.05
 
 
@@ -19,16 +28,25 @@ def _ts(value: str | None) -> str:
     return value or ""
 
 
+def _with_review_defaults(record: dict[str, Any]) -> dict[str, Any]:
+    if record.get("review_state") not in ("candidate", "approved"):
+        record["review_state"] = default_review_state(record.get("source_type"))
+    if record["review_state"] == "candidate":
+        record["pinned"] = 0
+    record.setdefault("superseded_by", None)
+    return record
+
+
 def merge_fragment(local: dict[str, Any] | None, remote: dict[str, Any]) -> dict[str, Any]:
     """Return the row to store. With no local copy the remote wins outright."""
     if local is None:
         out = dict(remote)
         out["tags"] = sorted(set(remote.get("tags") or []))
-        return out
+        return _with_review_defaults(out)
 
     remote_newer = _ts(remote.get("updated_at")) > _ts(local.get("updated_at"))
-    base = remote if remote_newer else local
-    out = {k: base.get(k) for k in CONTENT_FIELDS}
+    base, other = (remote, local) if remote_newer else (local, remote)
+    out = {k: base[k] if k in base else other.get(k) for k in CONTENT_FIELDS}
     out["id"] = local["id"]
     out["updated_at"] = max(_ts(local.get("updated_at")), _ts(remote.get("updated_at"))) or None
     out["created_at"] = min(
@@ -43,7 +61,7 @@ def merge_fragment(local: dict[str, Any] | None, remote: dict[str, Any]) -> dict
         flags = [t for t in (local.get("below_threshold_since"), remote.get("below_threshold_since")) if t]
         out["below_threshold_since"] = min(flags) if flags else None
     out["tags"] = sorted(set(local.get("tags") or []) | set(remote.get("tags") or []))
-    return out
+    return _with_review_defaults(out)
 
 
 def changed(local: dict[str, Any] | None, merged: dict[str, Any]) -> bool:

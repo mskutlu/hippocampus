@@ -20,6 +20,15 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Pin** — critical fragments never decay.
 - **Associations** — fragments returned together become linked.
 - **Negative feedback** (`-0.02`) — the AI flags wrong memories; they decay faster.
+- **Supersede** — `remember(..., supersedes="<old id>")` (or `hippo supersede OLD NEW`)
+  links a wrong fragment to its correction. The old one is no longer recalled or
+  injected; `get_fragment` still returns it with `superseded_by` pointing at the fix.
+  Both must belong to the same project.
+- **Review gate** — auto-generated fragments (`session-summary`, `auto-remembered`)
+  start as `candidate`: still returned by an explicit `recall`, but never
+  injected (rules-file top-N, hook payloads) and never auto-pinned until you
+  run `hippo review approve <id>` or pin them. `hippo review list` / `reject`
+  work through the queue.
 - **No time-based decay** — change only on access, feedback, or explicit cycles.
 - **Top-N auto-injected** — every client's rules file always carries the
   highest-ranking fragments so the LLM sees them without calling a tool.
@@ -519,6 +528,10 @@ hippo recall "kafka"
 hippo top --limit 10
 hippo pin   frag_01H...
 hippo forget frag_01H...
+hippo supersede frag_01H_OLD... frag_01H_NEW...
+hippo review list --source-type session-summary
+hippo review approve frag_01H...
+hippo review reject  frag_01H...
 
 # Working memory (hook-supported clients auto-log asks; Codex uses MCP calls directly)
 hippo progress log goal     "Ship the feature"

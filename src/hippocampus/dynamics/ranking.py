@@ -56,7 +56,8 @@ def top_n(
     project: str | None = None,
     scope: str = "all",
 ) -> list[frag_store.Fragment]:
-    """Return highest-scoring fragments for injection.
+    """Return highest-scoring fragments for injection. Review candidates and
+    superseded fragments are never injected.
 
     scope='global' -> only project-less fragments (rules file block)
     scope='project' -> current project + global (hook payload)
@@ -68,7 +69,8 @@ def top_n(
     # Fetch a generous candidate pool; then rank in Python so we can apply the
     # full score (SQLite's math functions are patchy across builds).
     pool = frag_store.list_all(
-        min_confidence=min_confidence, limit=max(200, n * 4), project=project, scope=scope
+        min_confidence=min_confidence, limit=max(200, n * 4), project=project, scope=scope,
+        eligible_only=True,
     )
     scored = [(ranked_score(f, now), f) for f in pool]
 

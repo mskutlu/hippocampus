@@ -63,6 +63,7 @@ Long-term memory (cross-session, cross-client):
 - Before answering anything domain-specific, call recall(query="...") to pull relevant fragments. Each recall boosts confidence on the hits.
 - When you learn something durable, call remember(content=..., summary=..., tags=[...], pinned=<bool>).
 - When a recalled fragment is wrong, call forget(fragment_id=..., reason=...).
+- If you know the correct fact, call remember(..., supersedes="<old id>") instead of only forget.
 - At task completion, call end_progress(distill_to_fragment=true, summary="...") to rotate the session and condense the ledger into a long-term fragment.
 
 The top-N long-term fragments and the live working ledger are injected in

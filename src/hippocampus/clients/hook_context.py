@@ -155,7 +155,7 @@ def _fragment_section(
 
     if query and query.strip():
         try:
-            recall_out = T.recall(query=query.strip(), limit=limit, boost=False)
+            recall_out = T.recall(query=query.strip(), limit=limit, boost=False, include_candidates=False)
             _add_hits(recall_out.get("fragments") or [])
         except Exception:
             pass
@@ -168,7 +168,7 @@ def _fragment_section(
             if not stream or not stream.strip():
                 continue
             try:
-                stream_out = T.recall(query=stream.strip(), limit=2, boost=False)
+                stream_out = T.recall(query=stream.strip(), limit=2, boost=False, include_candidates=False)
             except Exception:
                 continue
             _add_hits(stream_out.get("fragments") or [])

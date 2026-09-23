@@ -92,6 +92,7 @@ def format_injection_block(
         "> These are the highest-ranking memories right now. They are always in context.",
         "> Call the `recall` MCP tool when you need more detail — each call boosts confidence.",
         "> Call `remember` when you learn something worth keeping across sessions/clients.",
+        '> If a fragment is wrong and you know the correct fact, call `remember(..., supersedes="<old id>")` instead of only `forget`.',
         "",
     ]
     if bool(config.get_setting("wiki_enabled")):

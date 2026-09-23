@@ -45,6 +45,13 @@ def _utc_now() -> str:
 
 PIPELINE_TAG_PREFIXES = ("log_progress_auto:", "log_progress:", "trigger:", "client:", "cluster:")
 
+AUTO_SOURCE_TYPES = ("session-summary", "auto-remembered")
+
+
+def default_review_state(source_type: str | None, pinned: bool = False) -> str:
+    """Auto-generated fragments wait for review; a pin counts as approval."""
+    return "candidate" if source_type in AUTO_SOURCE_TYPES and not pinned else "approved"
+
 
 def clean_tags(tags: Iterable[str]) -> list[str]:
     """Drop machine tags that describe the pipeline, not the knowledge (V11)."""
@@ -72,6 +79,8 @@ class Fragment:
     pinned: bool = False
     below_threshold_since: str | None = None
     project: str | None = None
+    review_state: str = "approved"
+    superseded_by: str | None = None
     tags: list[str] = field(default_factory=list)
     associated_with: list[str] = field(default_factory=list)
 
@@ -90,6 +99,8 @@ class Fragment:
             "pinned": self.pinned,
             "below_threshold_since": self.below_threshold_since,
             "project": self.project,
+            "review_state": self.review_state,
+            "superseded_by": self.superseded_by,
             "tags": list(self.tags),
             "associated_with": list(self.associated_with),
         }
@@ -110,6 +121,8 @@ def _row_to_fragment(row: sqlite3.Row, tags: list[str], assoc: list[str]) -> Fra
         pinned=bool(row["pinned"]),
         below_threshold_since=row["below_threshold_since"],
         project=row["project"] if "project" in row.keys() else None,
+        review_state=row["review_state"],
+        superseded_by=row["superseded_by"],
         tags=tags,
         associated_with=assoc,
     )
@@ -190,11 +203,12 @@ def create(
             """
             INSERT INTO fragments
                 (id, content, summary, source_type, source_ref,
-                 confidence, accessed, created_at, updated_at, pinned, project)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                 confidence, accessed, created_at, updated_at, pinned, project, review_state)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
             """,
             (fid, content, summary, source_type, source_ref,
-             config.CONFIDENCE_INIT, now, now, 1 if pinned else 0, project),
+             config.CONFIDENCE_INIT, now, now, 1 if pinned else 0, project,
+             default_review_state(source_type, pinned)),
         )
         if canonical_tags:
             conn.executemany(
@@ -233,6 +247,8 @@ def update_fields(
     add_tags: Sequence[str] = (),
     remove_tags: Sequence[str] = (),
     project: str | None | bool = False,  # False = don't touch, None = global, str = set
+    review_state: str | None = None,
+    superseded_by: str | None = None,
 ) -> Fragment | None:
     """Partial update. Mirror is refreshed after the transaction commits."""
     sets: list[str] = []
@@ -264,11 +280,17 @@ def update_fields(
     if below_threshold_since is not False:  # explicit None or str
         sets.append("below_threshold_since = ?")
         params.append(below_threshold_since)
+    if review_state is not None:
+        sets.append("review_state = ?")
+        params.append(review_state)
+    if superseded_by is not None:
+        sets.append("superseded_by = ?")
+        params.append(superseded_by)
 
     # updated_at tracks content edits only; boosts/decay leave it alone so the
     # sync merge rule "newer updated_at wins" orders real edits (V11).
     content_edit = any(
-        v is not None for v in (content, summary, pinned)
+        v is not None for v in (content, summary, pinned, review_state, superseded_by)
     ) or project is not False or bool(add_tags) or bool(remove_tags)
     if content_edit:
         sets.append("updated_at = ?")
@@ -381,11 +403,14 @@ def list_all(
     *,
     project: str | None = None,
     scope: str = "all",
+    eligible_only: bool = False,
 ) -> list[Fragment]:
     query = "SELECT * FROM fragments WHERE confidence >= ?"
     params: list = [min_confidence]
     if not include_pinned:
         query += " AND pinned = 0"
+    if eligible_only:
+        query += " AND review_state = 'approved' AND superseded_by IS NULL"
     clause, extra = scope_clause(project, scope, alias="")
     query += clause
     params.extend(extra)
@@ -430,3 +455,17 @@ def project_counts() -> dict[str, int]:
             "SELECT COALESCE(project, '') AS p, COUNT(*) AS n FROM fragments GROUP BY p ORDER BY n DESC"
         ).fetchall()
     return {r["p"] or "(global)": int(r["n"]) for r in rows}
+
+
+def list_candidates(limit: int = 50, source_type: str | None = None) -> list[Fragment]:
+    """Fragments awaiting review, newest first."""
+    query = "SELECT * FROM fragments WHERE review_state = 'candidate'"
+    params: list = []
+    if source_type:
+        query += " AND source_type = ?"
+        params.append(source_type)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    with get_ro_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+        return [_row_to_fragment(row, _fetch_tags(conn, row["id"]), []) for row in rows]

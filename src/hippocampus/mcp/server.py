@@ -95,6 +95,10 @@ TOOL_SPECS: list[Tool] = [
                 "source_ref": {"type": "string", "description": "Pointer to origin (path, URL, session id)"},
                 "pinned": {"type": "boolean", "default": False, "description": "Shield from decay"},
                 "project": {"type": "string", "description": "Project name (default: current session's project)"},
+                "supersedes": {
+                    "type": "string",
+                    "description": "Id of a wrong fragment this one corrects (same project); it stops being served",
+                },
                 "scope": {
                     "type": "string",
                     "enum": ["project", "global"],
@@ -110,7 +114,8 @@ TOOL_SPECS: list[Tool] = [
         name="forget",
         description=(
             "Apply negative feedback to a fragment (-0.02 confidence). "
-            "Use when a recalled fragment turns out to be wrong or stale."
+            "Use when a recalled fragment turns out to be wrong or stale. "
+            'If you know the correct fact, call remember(..., supersedes="<old id>") instead of only forget.'
         ),
         inputSchema={
             "type": "object",

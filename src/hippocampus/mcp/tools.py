@@ -88,9 +88,13 @@ def recall(
     context_tag: str | None = None,
     boost: bool = True,
     scope: str = "project",
+    include_candidates: bool = True,
 ) -> dict[str, Any]:
     """Hybrid FTS + semantic search. Every returned hit is boosted unless
     `boost=False` (used by hook injection, which is not a real access).
+
+    Superseded fragments are never returned. `include_candidates=False`
+    also drops fragments still awaiting review (hook injection).
 
     `scope='project'` (default) returns the current project's fragments plus
     global ones; `scope='all'` searches every project (V11).
@@ -177,14 +181,18 @@ def recall(
         )
         ranked.append((fid, combined))
     ranked.sort(key=lambda t: -t[1])
-    top = ranked[:limit]
 
     # Hydrate fragments — prefer those already in the FTS pool
     hit_frags = []
-    for fid, _ in top:
+    for fid, _ in ranked:
+        if len(hit_frags) >= limit:
+            break
         f = fts_frags.get(fid) or frag_store.get(fid)
-        if f is not None and f.confidence >= min_confidence:
-            hit_frags.append(f)
+        if f is None or f.confidence < min_confidence or f.superseded_by:
+            continue
+        if not include_candidates and f.review_state != "approved":
+            continue
+        hit_frags.append(f)
     if not hit_frags:
         return {
             "query": query,
@@ -217,6 +225,7 @@ def recall(
                 "tags": f.tags,
                 "pinned": f.pinned,
                 "project": f.project,
+                "review_state": f.review_state,
                 "associated_with": f.associated_with,
                 "scores": {
                     "fts_rank": fts_ranks.get(f.id),
@@ -246,10 +255,12 @@ def remember(
     pinned: bool = False,
     project: str | None = None,
     scope: str = "project",
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Store a fragment. It belongs to `project` (default: the current
     session's project). `scope='global'` stores it without a project so it
-    is visible everywhere (V11)."""
+    is visible everywhere (V11). `supersedes` names a fragment this one
+    corrects; it stops being recalled or injected."""
     _ensure_bootstrapped()
 
     content = (content or "").strip()
@@ -259,6 +270,8 @@ def remember(
         project = None
     elif project is None:
         project = _current_project()
+    if supersedes:
+        _check_supersedable(supersedes, project)
 
     resolved_summary = (summary or "").strip()
     if not resolved_summary:
@@ -286,7 +299,42 @@ def remember(
         semantic_search.upsert_for_fragment(frag.id)
     except Exception:
         pass
-    return {"stored": True, "fragment": _as_dict(frag)}
+    out: dict[str, Any] = {"stored": True, "fragment": _as_dict(frag)}
+    if supersedes:
+        out["superseded"] = _as_dict(_link_supersede(supersedes, frag.id))
+    return out
+
+
+def _check_supersedable(old_id: str, project: str | None) -> None:
+    old = frag_store.get(old_id)
+    if old is None:
+        raise ValueError(f"fragment to supersede not found: {old_id}")
+    if old.superseded_by:
+        raise ValueError(f"{old_id} is already superseded by {old.superseded_by}")
+    if old.project != project:
+        raise ValueError(
+            f"{old_id} belongs to project {old.project or '(global)'}, not {project or '(global)'}"
+        )
+
+
+def _link_supersede(old_id: str, new_id: str) -> frag_store.Fragment:
+    updated = frag_store.update_fields(old_id, superseded_by=new_id)
+    feedback.log(old_id, "supersede", reason=new_id)
+    return updated
+
+
+def supersede(old_id: str, new_id: str) -> dict[str, Any]:
+    """Mark `old_id` as replaced by the existing fragment `new_id`."""
+    _ensure_bootstrapped()
+    new = frag_store.get(new_id)
+    if new is None:
+        raise ValueError(f"replacement fragment not found: {new_id}")
+    if new.id == old_id:
+        raise ValueError("a fragment cannot supersede itself")
+    if new.superseded_by:
+        raise ValueError(f"{new_id} is itself superseded by {new.superseded_by}")
+    _check_supersedable(old_id, new.project)
+    return {"superseded": _as_dict(_link_supersede(old_id, new_id)), "replacement": _as_dict(new)}
 
 
 def forget(fragment_id: str, reason: str | None = None) -> dict[str, Any]:
@@ -299,7 +347,7 @@ def forget(fragment_id: str, reason: str | None = None) -> dict[str, Any]:
 
 def pin(fragment_id: str) -> dict[str, Any]:
     _ensure_bootstrapped()
-    updated = frag_store.update_fields(fragment_id, pinned=True)
+    updated = frag_store.update_fields(fragment_id, pinned=True, review_state="approved")
     if updated is None:
         return {"found": False, "fragment_id": fragment_id}
     feedback.log(fragment_id, "pin")

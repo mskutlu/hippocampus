@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — review gate for auto-generated memory and supersede links
+
+- Auto-generated fragments (`session-summary`, `auto-remembered`) are created
+  as `review_state = 'candidate'`. Candidates stay searchable through explicit
+  `recall` (each hit reports `review_state`), but are left out of the
+  rules-file top-N, `top_fragments`, and hook injection, and are never
+  auto-pinned. `hippo review list | approve | reject` works the queue;
+  pinning a fragment also approves it.
+- `remember(..., supersedes="<old id>")` and `hippo supersede OLD NEW` link a
+  wrong fragment to its replacement (`superseded_by`, feedback kind
+  `supersede`). Superseded fragments drop out of recall and injection;
+  `get_fragment` still returns them. Missing, already superseded, or
+  cross-project targets are rejected and nothing is stored.
+- Migration `014_review_gate.sql` adds both columns and backfills: existing
+  auto-generated fragments become candidates, and every pinned one without
+  evidence of a deliberate pin (a manual `pin` feedback row not followed by an
+  `auto-pin`) is un-pinned, with an `unpin` feedback row
+  (`reason = review-gate-migration`). Deliberate pins stay pinned and approved.
+- Both fields sync between devices; records from peers without them keep the
+  local value or default to `candidate` for auto-generated source types, and a
+  candidate is never stored pinned.
+- `hippo audit` reports `candidate_fragments`; the injected memory protocol
+  tells agents to prefer `remember(..., supersedes=...)` over a bare `forget`
+  when they know the correct fact.
+
 ### Changed — V11 follow-ups: recall latency, Pi parity, sync efficiency
 
 - `recall` p95 372 ms → 85 ms on the production database (1,921 fragments,
