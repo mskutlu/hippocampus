@@ -295,6 +295,9 @@ def audit() -> dict[str, Any]:
             "SELECT COUNT(*) AS n FROM fragment_embeddings e JOIN fragments f ON f.id = e.fragment_id"
         ).fetchone()["n"]
         never_accessed = conn.execute("SELECT COUNT(*) AS n FROM fragments WHERE accessed = 0").fetchone()["n"]
+        candidates = conn.execute(
+            "SELECT COUNT(*) AS n FROM fragments WHERE review_state = 'candidate'"
+        ).fetchone()["n"]
         sessions_total = conn.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"]
         stale_sessions = conn.execute(
             """
@@ -324,6 +327,7 @@ def audit() -> dict[str, Any]:
         "saturated_ratio": round(saturated_ratio, 4),
         "oversized_fragments": oversized,
         "never_accessed_fragments": never_accessed,
+        "candidate_fragments": candidates,
         "embedding_coverage": round(embedding_coverage, 4),
         "distinct_tags": distinct_tags,
         "sessions_total": sessions_total,

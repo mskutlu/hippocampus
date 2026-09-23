@@ -10,7 +10,7 @@ def _frag(**kw):
         "id": "frag_a", "content": "c", "summary": "s", "source_type": "manual", "source_ref": None,
         "confidence": 0.5, "accessed": 0, "last_accessed_at": None, "created_at": "2026-01-01T00:00:00.000Z",
         "updated_at": "2026-01-01T00:00:00.000Z", "pinned": 0, "below_threshold_since": None, "project": None,
-        "tags": [],
+        "review_state": "approved", "superseded_by": None, "tags": [],
     }
     base.update(kw)
     return base
@@ -77,3 +77,45 @@ def test_association_merge():
     b = {"fragment_a": "x", "fragment_b": "y", "weight": 1.0, "co_accessed_count": 5, "last_co_accessed_at": "2026-02-01T00:00:00.000Z"}
     out = merge.merge_association(a, b)
     assert out == {"fragment_a": "x", "fragment_b": "y", "weight": 2.0, "co_accessed_count": 5, "last_co_accessed_at": "2026-02-01T00:00:00.000Z"}
+
+
+def test_review_fields_follow_the_newer_edit():
+    local = _frag(updated_at="2026-01-02T00:00:00.000Z", source_type="session-summary", review_state="candidate")
+    remote = _frag(updated_at="2026-01-03T00:00:00.000Z", source_type="session-summary",
+                   review_state="approved", superseded_by="frag_b")
+    out = merge.merge_fragment(local, remote)
+    assert out["review_state"] == "approved" and out["superseded_by"] == "frag_b"
+    assert merge.changed(local, out)
+
+
+def _pre_gate(**kw):
+    record = _frag(**kw)
+    del record["review_state"], record["superseded_by"]
+    return record
+
+
+def test_pre_gate_peer_keeps_local_review_fields():
+    local = _frag(source_type="session-summary", review_state="approved", superseded_by="frag_b")
+    remote = _pre_gate(content="edited", source_type="session-summary", updated_at="2026-02-01T00:00:00.000Z")
+    out = merge.merge_fragment(local, remote)
+    assert out["content"] == "edited"
+    assert out["review_state"] == "approved" and out["superseded_by"] == "frag_b"
+
+
+def test_pre_gate_record_without_local_gets_defaults():
+    summary = merge.merge_fragment(None, _pre_gate(source_type="session-summary"))
+    manual = merge.merge_fragment(None, _pre_gate(source_type="manual"))
+    assert summary["review_state"] == "candidate" and summary["superseded_by"] is None
+    assert manual["review_state"] == "approved" and manual["superseded_by"] is None
+
+
+def test_pre_gate_pin_on_candidate_is_dropped():
+    fresh = merge.merge_fragment(None, _pre_gate(source_type="auto-remembered", pinned=1))
+    assert fresh["review_state"] == "candidate" and fresh["pinned"] == 0
+
+    local = _frag(source_type="session-summary", review_state="candidate", pinned=0)
+    remote = _pre_gate(source_type="session-summary", pinned=1, updated_at="2026-02-01T00:00:00.000Z")
+    assert merge.merge_fragment(local, remote)["pinned"] == 0
+
+    approved = _frag(source_type="session-summary", review_state="approved", pinned=1)
+    assert merge.merge_fragment(approved, remote)["pinned"] == 1

@@ -88,7 +88,12 @@ def boost(
     # v1.6.0 — zombie protection: auto-pin once a fragment has been accessed
     # enough times that decay has clearly proven useless. Pinning halts decay
     # so the knowledge stops disappearing despite being in active use.
-    if updated is not None and not updated.pinned:
+    if (
+        updated is not None
+        and not updated.pinned
+        and updated.review_state == "approved"
+        and not updated.superseded_by
+    ):
         threshold = int(config.get_setting("auto_pin_access_threshold") or 0)
         if threshold > 0 and updated.accessed >= threshold:
             updated = frag_store.update_fields(fragment_id, pinned=True) or updated

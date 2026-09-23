@@ -8,6 +8,8 @@ Subcommands:
     recall         FTS search + boost
     forget         Apply negative feedback
     pin / unpin    Shield/unshield from decay
+    review         list | approve | reject auto-generated candidates
+    supersede      Link a wrong fragment to its replacement
     stats          Print dashboard
     list           List fragments (no boost)
     top            Print top-N by rank
@@ -312,17 +314,21 @@ def session_status(client: Optional[str], session_key: Optional[str]) -> None:
 @click.option("--source-type", default="manual")
 @click.option("--source-ref", default=None)
 @click.option("--pinned/--no-pinned", default=False)
-def remember(content: Optional[str], summary: Optional[str], tags: tuple, source_type: str, source_ref: Optional[str], pinned: bool) -> None:
+@click.option("--supersedes", default=None, help="Id of the wrong fragment this one replaces")
+def remember(content: Optional[str], summary: Optional[str], tags: tuple, source_type: str, source_ref: Optional[str], pinned: bool, supersedes: Optional[str]) -> None:
     """Store a synthesized fragment."""
     _bootstrap()
     if content is None:
         content = sys.stdin.read()
     from hippocampus.mcp import tools
 
-    out = tools.remember(
-        content=content, summary=summary, tags=list(tags),
-        source_type=source_type, source_ref=source_ref, pinned=pinned,
-    )
+    try:
+        out = tools.remember(
+            content=content, summary=summary, tags=list(tags),
+            source_type=source_type, source_ref=source_ref, pinned=pinned, supersedes=supersedes,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(out, indent=2, ensure_ascii=False))
 
 
@@ -365,6 +371,73 @@ def unpin(fragment_id: str) -> None:
     _bootstrap()
     from hippocampus.mcp import tools
     click.echo(json.dumps(tools.unpin(fragment_id), indent=2, ensure_ascii=False))
+
+
+@cli.command("supersede")
+@click.argument("old_id")
+@click.argument("new_id")
+def supersede_cmd(old_id: str, new_id: str) -> None:
+    """Mark OLD_ID as replaced by NEW_ID; OLD_ID stops being recalled or injected."""
+    _bootstrap()
+    from hippocampus.mcp import tools
+
+    try:
+        out = tools.supersede(old_id, new_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+@cli.group(name="review")
+def review_group() -> None:
+    """Review gate: auto-generated fragments stay candidates until approved."""
+
+
+@review_group.command("list")
+@click.option("--limit", default=50, show_default=True)
+@click.option("--source-type", default=None, help="e.g. session-summary, auto-remembered")
+def review_list_cmd(limit: int, source_type: Optional[str]) -> None:
+    """Candidates awaiting review, newest first."""
+    _bootstrap()
+    from hippocampus.storage import fragments as F
+
+    for f in F.list_candidates(limit=limit, source_type=source_type):
+        click.echo(f"{f.id}  {f.source_type}  {f.created_at}  {' '.join((f.summary or f.content).split())[:120]}")
+
+
+@review_group.command("approve")
+@click.argument("fragment_ids", nargs=-1, required=True)
+def review_approve_cmd(fragment_ids: tuple) -> None:
+    """Approve candidates so they can be injected and auto-pinned (does not pin)."""
+    _bootstrap()
+    from hippocampus.storage import feedback, fragments as F
+
+    approved, missing = [], []
+    for fid in fragment_ids:
+        if F.update_fields(fid, review_state="approved") is None:
+            missing.append(fid)
+            continue
+        feedback.log(fid, "approve")
+        approved.append(fid)
+    click.echo(json.dumps({"approved": approved, "missing": missing}, indent=2))
+
+
+@review_group.command("reject")
+@click.argument("fragment_ids", nargs=-1, required=True)
+def review_reject_cmd(fragment_ids: tuple) -> None:
+    """Archive candidates (mirror file moves to the archive folder)."""
+    _bootstrap()
+    from hippocampus.storage import feedback, fragments as F
+
+    rejected, missing = [], []
+    for fid in fragment_ids:
+        if F.get(fid) is None:
+            missing.append(fid)
+            continue
+        feedback.log(fid, "archive", reason="review-reject")
+        F.archive(fid)
+        rejected.append(fid)
+    click.echo(json.dumps({"rejected": rejected, "missing": missing}, indent=2))
 
 
 # ---------------------------------------------------------------------------
