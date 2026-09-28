@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 
 def test_render_context_with_working_session(hippo_env):
     """Live ledger entries appear in the rendered payload."""
@@ -119,6 +121,50 @@ def test_cli_context_query_passes_through(hippo_env):
     )
     assert result.exit_code == 0, result.output
     assert "kafka idempotency" in result.output
+
+
+def test_cli_progress_log_ask_skips_envelope_text(hippo_env):
+    """`hippo progress log ask` on hook/task markup logs nothing, opens no session."""
+    from click.testing import CliRunner
+
+    from hippocampus.cli.main import cli
+    from hippocampus.storage import sessions
+
+    runner = CliRunner()
+    envelope = "<task-notification>background task finished</task-notification>"
+    result = runner.invoke(
+        cli,
+        ["progress", "log", "ask", envelope, "--client", "pytest-envelope"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {"logged": False, "reason": "envelope"}
+
+    with pytest.raises(RuntimeError):
+        sessions.current_session_id("pytest-envelope", open_if_missing=False)
+
+
+def test_cli_progress_log_ask_normal_text_still_logs(hippo_env):
+    """A real user ask still opens a session and writes a ledger entry."""
+    from click.testing import CliRunner
+
+    from hippocampus.cli.main import cli
+    from hippocampus.storage import ledger as ledger_store, sessions
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["progress", "log", "ask", "what should I do next?", "--client", "pytest-envelope-2"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload.get("logged", True) is not False
+
+    sid = sessions.current_session_id("pytest-envelope-2", open_if_missing=False)
+    entries = ledger_store.current_entries(sid)
+    assert any("what should I do next?" in e.content for e in entries)
 
 
 def test_render_context_includes_wiki_status_when_enabled(hippo_env, monkeypatch):
