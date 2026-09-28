@@ -871,6 +871,11 @@ def progress_log(kind: str, content: str, details: Optional[str], client: Option
     if client:
         os.environ["HIPPOCAMPUS_CLIENT"] = client
     _bootstrap()
+    if kind == "ask":
+        from hippocampus.dynamics.autoremember import is_envelope
+        if is_envelope(content):
+            click.echo(json.dumps({"logged": False, "reason": "envelope"}, indent=2, ensure_ascii=False))
+            return
     from hippocampus.mcp import tools
     out = tools.log_progress(kind=kind, content=content, details=details)
     click.echo(json.dumps(out, indent=2, ensure_ascii=False))
@@ -978,6 +983,11 @@ def transcript_log(role: str, content: Optional[str], read_stdin: bool, source_e
     _bootstrap()
     if read_stdin or content is None:
         content = sys.stdin.read()
+    if role == "user":
+        from hippocampus.dynamics.autoremember import is_envelope
+        if is_envelope(content or ""):
+            click.echo(json.dumps({"logged": False, "reason": "envelope"}, indent=2, ensure_ascii=False))
+            return
     from hippocampus.mcp import tools
 
     out = tools.log_transcript(
