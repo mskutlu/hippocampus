@@ -260,7 +260,10 @@ def remember(
     """Store a fragment. It belongs to `project` (default: the current
     session's project). `scope='global'` stores it without a project so it
     is visible everywhere (V11). `supersedes` names a fragment this one
-    corrects; it stops being recalled or injected."""
+    corrects; it stops being recalled or injected.
+
+    Without `supersedes`, the result lists near-duplicates in the same
+    project as `similar` so the caller can supersede instead."""
     _ensure_bootstrapped()
 
     content = (content or "").strip()
@@ -302,7 +305,42 @@ def remember(
     out: dict[str, Any] = {"stored": True, "fragment": _as_dict(frag)}
     if supersedes:
         out["superseded"] = _as_dict(_link_supersede(supersedes, frag.id))
+    else:
+        similar = _similar_fragments(frag)
+        if similar is not None:
+            out["similar"] = similar
+            if similar:
+                best = similar[0]["id"]
+                out["hint"] = f'Near-duplicate exists; if this replaces it, use supersedes="{best}".'
     return out
+
+
+def _similar_fragments(frag: frag_store.Fragment, limit: int = 3) -> list[dict[str, Any]] | None:
+    """Live same-project fragments close to `frag`; None when embeddings are unavailable."""
+    try:
+        from hippocampus.embeddings import load_provider, search as semantic_search
+
+        if load_provider() is None:
+            return None
+        threshold = float(config.get_setting("remember_similar_threshold") or 0.85)
+        allowed = frag_store.ids_in_scope(frag.project, "project") or set()
+        allowed.discard(frag.id)
+        if not allowed:
+            return []
+        hits = semantic_search.semantic_topk(
+            semantic_search._text_for_fragment(frag), k=limit * 3, allowed_ids=allowed
+        )
+    except Exception:
+        return None
+    similar: list[dict[str, Any]] = []
+    for fid, score in hits:
+        if score < threshold or len(similar) >= limit:
+            break
+        other = frag_store.get(fid)
+        if other is None or other.project != frag.project or other.superseded_by:
+            continue
+        similar.append({"id": other.id, "summary": other.summary, "score": round(float(score), 4)})
+    return similar
 
 
 def _check_supersedable(old_id: str, project: str | None) -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 
@@ -62,15 +64,49 @@ def test_injected_fragment_is_not_boosted(hippo_env):
     assert F.get(frag.id).confidence == pytest.approx(0.5075)
 
 
-def test_boost_adds_context_tag(hippo_env):
-    from hippocampus.storage import fragments as F
+def test_boost_logs_context_tag_without_tagging(hippo_env):
+    from hippocampus.storage import feedback, fragments as F
     from hippocampus.dynamics import boost
 
     frag = F.create("c", summary="s", tags=["kafka"])
     boost.boost(frag.id, context_tag="debugging", client="pytest")
-    after = F.get(frag.id)
-    assert "debugging" in after.tags
-    assert "kafka" in after.tags
+    assert F.get(frag.id).tags == ["kafka"]
+    assert feedback.recent(1)[0]["reason"] == "debugging"
+
+
+def test_recall_with_context_tag_leaves_tags_unchanged(hippo_env):
+    from hippocampus.mcp import tools as T
+    from hippocampus.storage import fragments as F
+
+    fid = T.remember(content="kafka consumers must be idempotent", tags=["kafka"])["fragment"]["id"]
+    out = T.recall(query="kafka idempotent", context_tag="blue-29-review")
+    assert fid in [h["id"] for h in out["fragments"]]
+    assert F.get(fid).tags == ["kafka"]
+
+
+def test_tags_prune_removes_only_accreted_tags(hippo_env):
+    from click.testing import CliRunner
+
+    from hippocampus.cli.main import cli
+    from hippocampus.storage import feedback, fragments as F
+    from hippocampus.storage.db import get_conn
+
+    frag = F.create("c", summary="s", tags=["kafka", "blue-29-review", "debugging"])
+    with get_conn() as conn:
+        conn.execute("INSERT INTO fragment_tags(fragment_id, tag) VALUES (?, 'log_progress_auto:ask')", (frag.id,))
+    feedback.log(frag.id, "boost", delta=0.01, reason="blue-29-review")
+    other = F.create("o", summary="s", tags=["blue-29-review"])
+
+    dry = json.loads(CliRunner().invoke(cli, ["tags", "prune"]).output)
+    assert dry["dry_run"] is True and dry["tag_assignments"] == 2
+    assert dry["by_reason"] == {"boost-provenance": 1, "pipeline-prefix": 1}
+    assert len(F.get(frag.id).tags) == 4
+
+    applied = json.loads(CliRunner().invoke(cli, ["tags", "prune", "--apply"]).output)
+    assert applied["backup"]
+    assert sorted(F.get(frag.id).tags) == ["debugging", "kafka"]
+    assert F.get(other.id).tags == ["blue-29-review"]
+    assert (hippo_env["fragments_dir"] / f"{frag.id}.md").read_text().count("blue-29-review") == 0
 
 
 def test_boost_many_creates_associations(hippo_env):

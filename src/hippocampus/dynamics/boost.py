@@ -6,7 +6,7 @@ On any `recall` or `get_fragment` call:
 * fragments already injected into the session are not boosted (V11)
 * accessed   += 1
 * last_accessed_at = now
-* optional context_tag is attached
+* optional context_tag is recorded in feedback_log (never as a tag)
 * session_accesses is logged
 * pairwise associations are strengthened across all co-returned ids
 * below_threshold_since is cleared (shield against auto-archive)
@@ -23,16 +23,6 @@ from hippocampus.storage import associations, feedback, fragments as frag_store,
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def _store_context_tag(context_tag: str | None) -> bool:
-    if not context_tag or not context_tag.strip():
-        return False
-    tag = context_tag.strip()
-    return not (
-        tag.startswith("log_progress")
-        or tag.startswith("cluster:")
-    )
 
 
 def boost_delta(confidence: float) -> float:
@@ -61,17 +51,12 @@ def boost(
     new_conf = min(config.CONFIDENCE_MAX, current.confidence + delta)
     now = _utc_now()
 
-    add_tags: list[str] = []
-    if _store_context_tag(context_tag):
-        add_tags.append(context_tag.strip())
-
     updated = frag_store.update_fields(
         fragment_id,
         confidence=new_conf,
         accessed_delta=1,
         last_accessed_at=now,
         below_threshold_since=None,  # clear any pending-archive flag
-        add_tags=add_tags,
     )
 
     if session_id:

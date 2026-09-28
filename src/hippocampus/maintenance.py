@@ -415,6 +415,54 @@ def purge_noise(*, dry_run: bool = True) -> dict[str, Any]:
     return result
 
 
+def prune_accreted_tags(*, dry_run: bool = True) -> dict[str, Any]:
+    """Remove tags that old boosts copied from recall context tags.
+
+    A tag is pruned when feedback_log holds a `boost` for that fragment whose
+    reason equals the tag, or when it carries a pipeline prefix that
+    `clean_tags` rejects. Takes a backup first unless dry_run.
+    """
+    from collections import Counter
+
+    from hippocampus.storage import backup
+
+    with get_ro_conn() as conn:
+        rows = conn.execute(
+            "SELECT fragment_id, tag, EXISTS ("
+            "  SELECT 1 FROM feedback_log fl WHERE fl.fragment_id = ft.fragment_id"
+            "  AND fl.kind = 'boost' AND trim(fl.reason) = ft.tag"
+            ") AS boosted FROM fragment_tags ft"
+        ).fetchall()
+
+    removals: dict[str, list[str]] = {}
+    reasons: Counter[str] = Counter()
+    for r in rows:
+        if r["tag"].startswith(frag_store.PIPELINE_TAG_PREFIXES):
+            reasons["pipeline-prefix"] += 1
+        elif r["boosted"]:
+            reasons["boost-provenance"] += 1
+        else:
+            continue
+        removals.setdefault(r["fragment_id"], []).append(r["tag"])
+
+    tag_counts = Counter(t for tags in removals.values() for t in tags)
+    result: dict[str, Any] = {
+        "dry_run": dry_run,
+        "fragments": len(removals),
+        "tag_assignments": sum(tag_counts.values()),
+        "by_reason": dict(reasons),
+        "top_tags": tag_counts.most_common(20),
+        "backup": None,
+    }
+    if dry_run or not removals:
+        return result
+
+    result["backup"] = backup.create(prefix="pre-tag-prune")["path"]
+    for fid, tags in removals.items():
+        frag_store.update_fields(fid, remove_tags=tags)
+    return result
+
+
 def run_daily_maintenance(*, dry_run: bool = False) -> dict[str, Any]:
     """Archive + session cleanup + feedback prune + reindex, in that order."""
     from hippocampus.dynamics import archive as archive_dyn

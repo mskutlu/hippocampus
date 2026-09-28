@@ -85,3 +85,12 @@ def test_format_injection_block_includes_wiki_guidance_when_enabled(hippo_env, m
     assert "wiki_not_initialized" in block
     # sanity check env override is active in this test process
     assert config.get_setting("wiki_enabled") is True
+
+
+def test_format_injection_block_includes_capture_policy(hippo_env):
+    from hippocampus.clients.injector import format_injection_block
+
+    block = format_injection_block([])
+    assert "What to remember" in block
+    assert "fetch it live" in block
+    assert "`similar`" in block and "expires_at" not in block
