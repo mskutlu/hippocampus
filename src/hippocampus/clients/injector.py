@@ -93,6 +93,11 @@ def format_injection_block(
         "> Call the `recall` MCP tool when you need more detail — each call boosts confidence.",
         "> Call `remember` when you learn something worth keeping across sessions/clients.",
         '> If a fragment is wrong and you know the correct fact, call `remember(..., supersedes="<old id>")` instead of only `forget`.',
+        ">",
+        "> **What to remember:**",
+        "> - Durable facts: decisions + rationale, owners, constraints, gotchas. Dates as YYYY-MM-DD.",
+        "> - Never live state a tool owns (MR/PR/ticket status, pod/deploy state, counts) — fetch it live.",
+        '> - If `remember` returns `similar` fragments, prefer `supersedes="<id>"` over a parallel fragment.',
         "",
     ]
     if bool(config.get_setting("wiki_enabled")):

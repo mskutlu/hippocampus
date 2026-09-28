@@ -93,6 +93,9 @@ Long-term memory (cross-session, cross-client):
 - When you learn something durable, call remember(content=..., summary=..., tags=[...], pinned=<bool>).
 - When a recalled fragment is wrong, call forget(fragment_id=..., reason=...).
 - If you know the correct fact, call remember(..., supersedes="<old id>") instead of only forget.
+- What to remember: durable facts (decisions + rationale, owners, constraints, gotchas); dates as YYYY-MM-DD.
+- Never remember live state a tool owns (MR/PR/ticket status, pod/deploy state, counts); fetch it live.
+- If remember returns similar fragments, prefer supersedes="<id>" over a parallel fragment.
 - At task completion, call end_progress(distill_to_fragment=true, summary="...") to rotate the session and condense the ledger into a long-term fragment.
 
 The top-N long-term fragments and the live working ledger are also kept in

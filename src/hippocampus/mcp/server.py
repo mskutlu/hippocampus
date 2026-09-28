@@ -54,7 +54,7 @@ TOOL_SPECS: list[Tool] = [
         description=(
             "Search synthesized memory fragments. "
             "Every returned fragment is boosted (+0.015 confidence, access counter +1, "
-            "co-access associations strengthened, context_tag attached). "
+            "co-access associations strengthened). "
             "Use this when you need to retrieve what you or the user already knows."
         ),
         inputSchema={
@@ -65,7 +65,7 @@ TOOL_SPECS: list[Tool] = [
                 "min_confidence": {"type": "number", "default": 0.0, "minimum": 0.0, "maximum": 1.0},
                 "context_tag": {
                     "type": "string",
-                    "description": "Optional tag (e.g. 'debugging') added to every hit",
+                    "description": "Optional label (e.g. 'debugging') logged with the boost; not added to fragment tags",
                 },
                 "scope": {
                     "type": "string",
@@ -83,7 +83,9 @@ TOOL_SPECS: list[Tool] = [
         description=(
             "Store a synthesized fragment (NOT raw conversation). "
             "Only distilled, atomic ideas belong here. "
-            "New fragments start at confidence=0.5."
+            "New fragments start at confidence=0.5. "
+            "The result lists near-duplicates in the same project as `similar` "
+            "([{id, summary, score}]); if one is outdated, store again with supersedes=<id>."
         ),
         inputSchema={
             "type": "object",

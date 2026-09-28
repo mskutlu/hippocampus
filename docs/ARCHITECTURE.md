@@ -76,9 +76,9 @@ One row per atomic synthesized memory. Columns of interest:
 
 ### `fragment_tags`
 
-Many-to-many tag assignments. Tags accumulate organically — `context_tag` on
-`recall` adds to the tag set, so a fragment recalled during debugging gains a
-`debugging` tag automatically.
+Many-to-many tag assignments, set when a fragment is written. `context_tag` on
+`recall` is logged in `feedback_log.reason`, never added to the tag set.
+`hippo tags prune` removes tags accreted by older versions.
 
 ### `associations`
 
@@ -133,7 +133,7 @@ insert/update/delete.
 
 | Event | Formula | Notes |
 |---|---|---|
-| Boost on access | `confidence = min(1.0, confidence + 0.015)` | +1 to `accessed`, set `last_accessed_at`, optional context tag, clear `below_threshold_since` |
+| Boost on access | `confidence = min(1.0, confidence + 0.015)` | +1 to `accessed`, set `last_accessed_at`, context tag logged to `feedback_log`, clear `below_threshold_since` |
 | Negative feedback | `confidence = max(0.0, confidence - 0.02)` | logged in `feedback_log` |
 | Decay per cycle | `confidence = max(0.0, confidence - 0.002)` | only if NOT pinned AND NOT accessed in current/previous session |
 | Shield | `session_accesses ∩ last 2 sessions` | anything in that set is protected in this decay cycle |

@@ -11,6 +11,7 @@ Subcommands:
     review         list | approve | reject auto-generated candidates
     supersede      Link a wrong fragment to its replacement
     stats          Print dashboard
+    tags           prune tags accreted by old recall boosts
     list           List fragments (no boost)
     top            Print top-N by rank
     decay          Run one decay cycle (dry-run supported)
@@ -492,6 +493,21 @@ def purge_noise_cmd(dry_run: bool) -> None:
     from hippocampus import maintenance
 
     click.echo(json.dumps(maintenance.purge_noise(dry_run=dry_run), indent=2, ensure_ascii=False))
+
+
+@cli.group(name="tags")
+def tags_group() -> None:
+    """Tag maintenance."""
+
+
+@tags_group.command("prune")
+@click.option("--apply", is_flag=True, help="Remove the tags (default: dry-run)")
+def tags_prune_cmd(apply: bool) -> None:
+    """Remove tags that old recalls accreted from context_tag (backs up first)."""
+    _bootstrap()
+    from hippocampus import maintenance
+
+    click.echo(json.dumps(maintenance.prune_accreted_tags(dry_run=not apply), indent=2, ensure_ascii=False))
 
 
 @cli.command("maintain")

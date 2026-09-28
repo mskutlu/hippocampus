@@ -142,6 +142,7 @@ _DEFAULTS: dict[str, Any] = {
     "pin_rank_bonus": 0.03,                # ranking bonus; pin protects from decay but does not dominate
     "tag_canonicalize_threshold": 0.85,    # difflib ratio above this -> use existing tag
     "dedup_cosine_threshold": 0.95,        # hippo dedup: pairs above this are duplicates
+    "remember_similar_threshold": 0.85,    # remember: report same-project hits above this
     "autoremember_enabled": True,          # UserPromptSubmit pattern-detect
     "autoremember_min_chars": 60,          # skip short prompts (no rule body)
     "autoremember_ignore_patterns": [      # V11: never remember hook envelopes
