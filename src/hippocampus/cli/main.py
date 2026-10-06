@@ -9,6 +9,7 @@ Subcommands:
     forget         Apply negative feedback
     pin / unpin    Shield/unshield from decay
     review         list | approve | reject auto-generated candidates
+    dream          Print the dreaming agent prompt
     supersede      Link a wrong fragment to its replacement
     stats          Print dashboard
     tags           prune tags accreted by old recall boosts
@@ -316,8 +317,12 @@ def session_status(client: Optional[str], session_key: Optional[str]) -> None:
 @click.option("--source-ref", default=None)
 @click.option("--pinned/--no-pinned", default=False)
 @click.option("--supersedes", default=None, help="Id of the wrong fragment this one replaces")
-def remember(content: Optional[str], summary: Optional[str], tags: tuple, source_type: str, source_ref: Optional[str], pinned: bool, supersedes: Optional[str]) -> None:
+@click.option("--project", default=None, help="Store under this project instead of the current one")
+@click.option("--global", "global_", is_flag=True, help="Store without a project (visible everywhere)")
+def remember(content: Optional[str], summary: Optional[str], tags: tuple, source_type: str, source_ref: Optional[str], pinned: bool, supersedes: Optional[str], project: Optional[str], global_: bool) -> None:
     """Store a synthesized fragment."""
+    if project and global_:
+        raise click.UsageError("--project and --global are mutually exclusive")
     _bootstrap()
     if content is None:
         content = sys.stdin.read()
@@ -327,6 +332,7 @@ def remember(content: Optional[str], summary: Optional[str], tags: tuple, source
         out = tools.remember(
             content=content, summary=summary, tags=list(tags),
             source_type=source_type, source_ref=source_ref, pinned=pinned, supersedes=supersedes,
+            project=project, scope="global" if global_ else "project",
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -396,14 +402,36 @@ def review_group() -> None:
 
 @review_group.command("list")
 @click.option("--limit", default=50, show_default=True)
-@click.option("--source-type", default=None, help="e.g. session-summary, auto-remembered")
-def review_list_cmd(limit: int, source_type: Optional[str]) -> None:
+@click.option("--source-type", multiple=True, help="e.g. session-summary, auto-remembered (repeatable)")
+@click.option("--json", "as_json", is_flag=True, help="Print a JSON array with neighbors")
+@click.option("--neighbors", default=5, show_default=True, help="With --json: max neighbors per candidate, 0 disables")
+@click.option("--threshold", default=0.7, show_default=True, help="With --json: minimum neighbor cosine")
+def review_list_cmd(limit: int, source_type: tuple, as_json: bool, neighbors: int, threshold: float) -> None:
     """Candidates awaiting review, newest first."""
     _bootstrap()
+    from hippocampus.mcp import tools
     from hippocampus.storage import fragments as F
 
-    for f in F.list_candidates(limit=limit, source_type=source_type):
-        click.echo(f"{f.id}  {f.source_type}  {f.created_at}  {' '.join((f.summary or f.content).split())[:120]}")
+    candidates = F.list_candidates(limit=limit, source_type=source_type)
+    if not as_json:
+        for f in candidates:
+            click.echo(f"{f.id}  {f.source_type}  {f.created_at}  {' '.join((f.summary or f.content).split())[:120]}")
+        return
+    pools: dict[Optional[str], set] = {}
+    items = []
+    for f in candidates:
+        item = {
+            "id": f.id, "source_type": f.source_type, "source_ref": f.source_ref, "project": f.project,
+            "created_at": f.created_at, "summary": f.summary, "content": f.content, "tags": f.tags,
+        }
+        if neighbors > 0:
+            if f.project not in pools:
+                pools[f.project] = F.curated_ids(f.project)
+            item["neighbors"] = tools._similar_fragments(
+                f, limit=neighbors, threshold=threshold, allowed_ids=pools[f.project], detail=True
+            )
+        items.append(item)
+    click.echo(json.dumps(items, indent=2, ensure_ascii=False))
 
 
 @review_group.command("approve")
@@ -426,19 +454,32 @@ def review_approve_cmd(fragment_ids: tuple) -> None:
 @review_group.command("reject")
 @click.argument("fragment_ids", nargs=-1, required=True)
 def review_reject_cmd(fragment_ids: tuple) -> None:
-    """Archive candidates (mirror file moves to the archive folder)."""
+    """Archive candidates (mirror file moves to the archive folder); other fragments are skipped."""
     _bootstrap()
     from hippocampus.storage import feedback, fragments as F
 
-    rejected, missing = [], []
+    rejected, skipped, missing = [], [], []
     for fid in fragment_ids:
-        if F.get(fid) is None:
+        frag = F.get(fid)
+        if frag is None:
             missing.append(fid)
+            continue
+        if frag.review_state != "candidate":
+            skipped.append({"id": fid, "reason": "not a candidate"})
             continue
         feedback.log(fid, "archive", reason="review-reject")
         F.archive(fid)
         rejected.append(fid)
-    click.echo(json.dumps({"rejected": rejected, "missing": missing}, indent=2))
+    click.echo(json.dumps({"rejected": rejected, "skipped": skipped, "missing": missing}, indent=2))
+
+
+@cli.command("dream")
+@click.option("--limit", type=click.IntRange(min=1), default=20, show_default=True, help="Candidates per batch")
+def dream_cmd(limit: int) -> None:
+    """Print the dreaming agent prompt: claude -p "$(hippo dream)"."""
+    from hippocampus import dream
+
+    click.echo(dream.render(limit))
 
 
 # ---------------------------------------------------------------------------

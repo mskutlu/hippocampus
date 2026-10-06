@@ -242,7 +242,7 @@ def backfill(*, dry_run: bool = True) -> dict[str, Any]:
             SELECT f.id, f.source_ref, s.session_key
             FROM fragments f
             LEFT JOIN sessions s ON s.id = f.source_ref
-            WHERE f.project IS NULL
+            WHERE f.project IS NULL AND f.source_type != 'dream'
             """
         ).fetchall()
         tags_by_id: dict[str, list[str]] = {}

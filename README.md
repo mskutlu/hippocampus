@@ -29,6 +29,11 @@ Hippocampus implements both as an external memory substrate for AI assistants.
   injected (rules-file top-N, hook payloads) and never auto-pinned until you
   run `hippo review approve <id>` or pin them. `hippo review list` / `reject`
   work through the queue.
+- **Dreaming** — `hippo dream` prints a prompt for any agent. It reads a batch of
+  raw candidates (`hippo review list --json`, with similar approved/dream
+  neighbors), writes durable one-line facts as new `dream` candidates, and
+  rejects the processed blobs. Dream facts stay behind the review gate; nothing
+  is approved or superseded for you.
 - **No time-based decay** — change only on access, feedback, or explicit cycles.
 - **Top-N auto-injected** — every client's rules file always carries the
   highest-ranking fragments so the LLM sees them without calling a tool.
@@ -532,6 +537,9 @@ hippo supersede frag_01H_OLD... frag_01H_NEW...
 hippo review list --source-type session-summary
 hippo review approve frag_01H...
 hippo review reject  frag_01H...
+hippo remember -c "..." --project acme     # or --global; default is the session's project
+claude -p "$(hippo dream)"                  # extract atomic facts from raw candidates
+hippo review list --source-type dream      # then approve / reject the dream facts
 
 # Working memory (hook-supported clients auto-log asks; Codex uses MCP calls directly)
 hippo progress log goal     "Ship the feature"

@@ -45,7 +45,7 @@ def _utc_now() -> str:
 
 PIPELINE_TAG_PREFIXES = ("log_progress_auto:", "log_progress:", "trigger:", "client:", "cluster:")
 
-AUTO_SOURCE_TYPES = ("session-summary", "auto-remembered")
+AUTO_SOURCE_TYPES = ("session-summary", "auto-remembered", "dream")
 
 
 def default_review_state(source_type: str | None, pinned: bool = False) -> str:
@@ -457,13 +457,25 @@ def project_counts() -> dict[str, int]:
     return {r["p"] or "(global)": int(r["n"]) for r in rows}
 
 
-def list_candidates(limit: int = 50, source_type: str | None = None) -> list[Fragment]:
-    """Fragments awaiting review, newest first."""
-    query = "SELECT * FROM fragments WHERE review_state = 'candidate'"
+def curated_ids(project: str | None) -> set[str]:
+    """Live approved or dream fragment ids of exactly `project` (None = global)."""
+    with get_ro_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM fragments WHERE project IS ? AND superseded_by IS NULL"
+            " AND (review_state = 'approved' OR source_type = 'dream')",
+            (project,),
+        ).fetchall()
+    return {r["id"] for r in rows}
+
+
+def list_candidates(limit: int = 50, source_type: str | Sequence[str] | None = None) -> list[Fragment]:
+    """Live fragments awaiting review, newest first."""
+    types = [source_type] if isinstance(source_type, str) else list(source_type or [])
+    query = "SELECT * FROM fragments WHERE review_state = 'candidate' AND superseded_by IS NULL"
     params: list = []
-    if source_type:
-        query += " AND source_type = ?"
-        params.append(source_type)
+    if types:
+        query += f" AND source_type IN ({','.join('?' * len(types))})"
+        params.extend(types)
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     with get_ro_conn() as conn:

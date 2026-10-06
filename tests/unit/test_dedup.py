@@ -43,8 +43,8 @@ def test_dedup_returns_empty_when_corpus_unique(hippo_env, monkeypatch):
     assert dedup.find_duplicates(threshold=0.99) == []
 
 
-def test_dedup_merge_keeps_keeper_kills_loser(hippo_env, monkeypatch):
-    from hippocampus.embeddings import dedup
+def test_dedup_merge_supersedes_loser(hippo_env, monkeypatch):
+    from hippocampus.embeddings import dedup, store
     from hippocampus.mcp import tools as T
     from hippocampus.storage import fragments as F
 
@@ -58,13 +58,57 @@ def test_dedup_merge_keeps_keeper_kills_loser(hippo_env, monkeypatch):
         summary="Kafka consumer idempotency notes",
         tags=["kafka", "duplicate-protection"],
     )
-    out = dedup.merge(a["fragment"]["id"], b["fragment"]["id"])
+    a_id, b_id = a["fragment"]["id"], b["fragment"]["id"]
+    store.put(a_id, [1.0, 0.0], model="stub")
+    store.put(b_id, [0.99, 0.01], model="stub")
+
+    out = dedup.merge(a_id, b_id)
     assert out["merged"] is True
 
-    kept = F.get(a["fragment"]["id"])
-    assert kept is not None
-    assert F.get(b["fragment"]["id"]) is None  # loser deleted
-    # Loser tags merged in
+    kept = F.get(a_id)
+    loser = F.get(b_id)
+    assert kept is not None and kept.superseded_by is None
+    assert loser is not None and loser.superseded_by == a_id
+    assert store.get(b_id) is None
     assert "duplicate-protection" in kept.tags
-    # Loser content appended
     assert "extra detail" in (kept.content or "").lower()
+    recalled = {f["id"] for f in T.recall("Kafka consumer idempotency notes")["fragments"]}
+    assert a_id in recalled and b_id not in recalled
+
+
+def test_dedup_skips_cross_project_pairs(hippo_env):
+    from hippocampus.embeddings import dedup, store
+    from hippocampus.mcp import tools as T
+    from hippocampus.storage import fragments as F
+
+    a = T.remember(content="Kafka consumers must be idempotent.", project="alpha")["fragment"]["id"]
+    b = T.remember(content="Kafka consumers should be idempotent.", project="beta")["fragment"]["id"]
+    store.put(a, [1.0, 0.0], model="stub")
+    store.put(b, [0.99, 0.01], model="stub")
+
+    assert dedup.find_duplicates(threshold=0.90) == []
+    out = dedup.merge(a, b)
+    assert out["merged"] is False
+    assert "beta" in out["reason"]
+    assert F.get(b).superseded_by is None
+    assert F.get(a).content == "Kafka consumers must be idempotent."
+
+
+def test_dedup_skips_superseded_fragments(hippo_env):
+    from hippocampus.embeddings import dedup, store
+    from hippocampus.mcp import tools as T
+    from hippocampus.storage import fragments as F
+
+    old = T.remember(content="Kafka consumers must be idempotent.")["fragment"]["id"]
+    dup = T.remember(content="Kafka consumers should be idempotent.")["fragment"]["id"]
+    new = T.remember(content="Kafka consumers need idempotent handlers.")["fragment"]["id"]
+    for fid, vec in ((old, [1.0, 0.0]), (dup, [0.99, 0.01]), (new, [0.98, 0.02])):
+        store.put(fid, vec, model="stub")
+    T.supersede(old, new)
+
+    pair_ids = {frozenset((p.keeper, p.loser)) for p in dedup.find_duplicates(threshold=0.90)}
+    assert pair_ids == {frozenset((dup, new))}
+
+    assert dedup.merge(new, old)["merged"] is False
+    assert dedup.merge(old, dup)["merged"] is False
+    assert F.get(dup).superseded_by is None
