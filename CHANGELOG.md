@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — dreaming: agent-driven distillation of the candidate queue
+
+- `hippo dream [--limit N]` prints a self-contained prompt for any agent
+  (`claude -p "$(hippo dream)"`). The agent reads raw candidates, writes
+  durable one-line facts as `source_type = dream` candidates, and rejects the
+  processed blobs. `dream` is a gated source type, so its output waits for
+  `hippo review approve`; the prompt forbids approving, superseding approved
+  fragments, forgetting or pinning, and flags contradictions with approved
+  fragments in the fact's content instead.
+- `hippo review list --json` prints candidates with `neighbors`: up to
+  `--neighbors K` (default 5, 0 disables) same-project, live fragments with
+  cosine >= `--threshold` (default 0.7) that are approved or `dream`, each with
+  summary, content (400 chars), review state, source type and score. `null`
+  when embeddings are unavailable. `--source-type` is now repeatable.
+- `hippo review reject` archives only candidates; any other id is reported in
+  `skipped` with a reason and left intact. `hippo review list` no longer shows
+  superseded candidates.
+- `hippo remember` gains `--project NAME` and `--global` (mutually exclusive).
+  Without a session the current project is unknown, so scripted writes need one.
+- `remember` defaults `source_ref` to the active session id for project-scoped
+  writes only (nothing is opened when no session exists; global writes keep
+  none) and `recall` results report `source_ref`. `hippo project backfill`
+  skips `dream` fragments.
+- `hippo dedup` merge supersedes the loser (`superseded_by`) instead of
+  deleting it, and refuses cross-project, self, and already superseded pairs.
+  Duplicate detection skips superseded fragments and cross-project pairs.
+
 ### Added — review gate for auto-generated memory and supersede links
 
 - Auto-generated fragments (`session-summary`, `auto-remembered`) are created

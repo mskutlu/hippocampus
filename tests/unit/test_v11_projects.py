@@ -173,6 +173,23 @@ def test_backfill_from_session_key_and_tags(hippo_env):
     assert F.project_counts() == {"acme": 2, "hippo": 1, "(global)": 1}
 
 
+def test_backfill_skips_dream_fragments(hippo_env):
+    projects = _write_rules(hippo_env)
+    from hippocampus.storage import fragments as F
+    from hippocampus.storage.db import get_conn
+
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO sessions(id, client, session_key, started_at) VALUES "
+            "('sess_a', 'codex', 'tty-ttys003-cwd-acme-orders-5bbe5d2dc2f97439', '2026-01-01T00:00:00.000Z')"
+        )
+    dream = F.create("d", summary="d", source_type="dream", source_ref="sess_a")
+
+    assert projects.backfill(dry_run=True)["assigned"] == {}
+    projects.backfill(dry_run=False)
+    assert F.get(dream.id).project is None
+
+
 def test_hook_payload_names_project(hippo_env, monkeypatch):
     _write_rules(hippo_env)
     monkeypatch.setenv("HIPPOCAMPUS_PROJECT", "acme")

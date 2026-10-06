@@ -67,11 +67,21 @@ def _as_dict(frag) -> dict[str, Any]:
 
 
 _RRF_K = 60  # standard RRF constant
+NEIGHBOR_CONTENT_CHARS = 400
 
 
 def _current_project(client: str | None = None) -> str | None:
     try:
         return sessions.current_project(_client_name(client))
+    except Exception:
+        return None
+
+
+def _active_session_id() -> str | None:
+    try:
+        return sessions.current_session_id(
+            _client_name(), session_key=sessions.derive_session_key(), open_if_missing=False
+        )
     except Exception:
         return None
 
@@ -225,6 +235,7 @@ def recall(
                 "tags": f.tags,
                 "pinned": f.pinned,
                 "project": f.project,
+                "source_ref": f.source_ref,
                 "review_state": f.review_state,
                 "associated_with": f.associated_with,
                 "scores": {
@@ -275,6 +286,8 @@ def remember(
         project = _current_project()
     if supersedes:
         _check_supersedable(supersedes, project)
+    if source_ref is None and scope != "global":
+        source_ref = _active_session_id()
 
     resolved_summary = (summary or "").strip()
     if not resolved_summary:
@@ -315,15 +328,27 @@ def remember(
     return out
 
 
-def _similar_fragments(frag: frag_store.Fragment, limit: int = 3) -> list[dict[str, Any]] | None:
-    """Live same-project fragments close to `frag`; None when embeddings are unavailable."""
+def _similar_fragments(
+    frag: frag_store.Fragment,
+    limit: int = 3,
+    *,
+    threshold: float | None = None,
+    allowed_ids: set[str] | None = None,
+    detail: bool = False,
+) -> list[dict[str, Any]] | None:
+    """Live same-project fragments close to `frag`; None when embeddings are unavailable.
+
+    `allowed_ids` replaces the project scope as the candidate pool; `detail`
+    adds content, review_state and source_type to each hit."""
     try:
         from hippocampus.embeddings import load_provider, search as semantic_search
 
         if load_provider() is None:
             return None
-        threshold = float(config.get_setting("remember_similar_threshold") or 0.85)
-        allowed = frag_store.ids_in_scope(frag.project, "project") or set()
+        if threshold is None:
+            threshold = float(config.get_setting("remember_similar_threshold") or 0.85)
+        pool = frag_store.ids_in_scope(frag.project, "project") if allowed_ids is None else allowed_ids
+        allowed = set(pool or ())
         allowed.discard(frag.id)
         if not allowed:
             return []
@@ -339,7 +364,15 @@ def _similar_fragments(frag: frag_store.Fragment, limit: int = 3) -> list[dict[s
         other = frag_store.get(fid)
         if other is None or other.project != frag.project or other.superseded_by:
             continue
-        similar.append({"id": other.id, "summary": other.summary, "score": round(float(score), 4)})
+        item: dict[str, Any] = {"id": other.id, "summary": other.summary}
+        if detail:
+            item.update(
+                content=other.content[:NEIGHBOR_CONTENT_CHARS],
+                review_state=other.review_state,
+                source_type=other.source_type,
+            )
+        item["score"] = round(float(score), 4)
+        similar.append(item)
     return similar
 
 

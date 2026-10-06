@@ -13,6 +13,7 @@ from typing import Iterable
 from hippocampus import config
 from hippocampus.embeddings import search as semantic_search
 from hippocampus.embeddings import store as vstore
+from hippocampus.mcp import tools
 from hippocampus.storage import fragments as frag_store
 
 
@@ -28,26 +29,25 @@ def find_duplicates(*, threshold: float | None = None, limit: int | None = None)
     thr = float(threshold if threshold is not None else config.get_setting("dedup_cosine_threshold") or 0.95)
 
     pairs: list[DuplicatePair] = []
+    # Hydrate live fragments once so we can pick keepers in O(n)
+    live = {f.id: f for f in frag_store.list_all(limit=10_000_000) if not f.superseded_by}
     vectors: list[tuple[str, list[float]]] = [
-        (fid, vec) for fid, vec, _model in vstore.iter_all()
+        (fid, vec) for fid, vec, _model in vstore.iter_all() if fid in live
     ]
     n = len(vectors)
     if n < 2:
         return []
 
-    # Hydrate confidence once so we can pick keepers in O(n)
-    confidences: dict[str, float] = {}
-    for f in frag_store.list_all(limit=10_000_000):
-        confidences[f.id] = f.confidence
-
     for i in range(n):
         fid_a, vec_a = vectors[i]
         for j in range(i + 1, n):
             fid_b, vec_b = vectors[j]
+            if live[fid_a].project != live[fid_b].project:
+                continue
             score = semantic_search.cosine(vec_a, vec_b)
             if score >= thr:
-                conf_a = confidences.get(fid_a, 0.0)
-                conf_b = confidences.get(fid_b, 0.0)
+                conf_a = live[fid_a].confidence
+                conf_b = live[fid_b].confidence
                 if conf_a >= conf_b:
                     pairs.append(DuplicatePair(keeper=fid_a, loser=fid_b, score=score))
                 else:
@@ -60,11 +60,23 @@ def find_duplicates(*, threshold: float | None = None, limit: int | None = None)
 
 
 def merge(keeper_id: str, loser_id: str) -> dict | None:
-    """Merge `loser_id` into `keeper_id`. Returns a summary dict, or None if either is missing."""
+    """Merge `loser_id` into `keeper_id` and supersede the loser.
+
+    Returns a summary dict, or None if either is missing. A pair that cannot
+    be merged yields {"merged": False, "reason": ...}.
+    """
     keeper = frag_store.get(keeper_id)
     loser = frag_store.get(loser_id)
     if keeper is None or loser is None:
         return None
+    if keeper_id == loser_id:
+        return {"merged": False, "reason": "cannot merge a fragment into itself"}
+    if keeper.superseded_by:
+        return {"merged": False, "reason": f"{keeper_id} is itself superseded by {keeper.superseded_by}"}
+    try:
+        tools._check_supersedable(loser_id, keeper.project)
+    except ValueError as e:
+        return {"merged": False, "reason": str(e)}
 
     # Copy loser's tags to keeper (canonicalization handled in update_fields)
     add_tags = [t for t in (loser.tags or []) if t not in (keeper.tags or [])]
@@ -91,6 +103,8 @@ def merge(keeper_id: str, loser_id: str) -> dict | None:
     if delta > 0:
         frag_store.update_fields(keeper_id, accessed_delta=int(delta))
 
+    tools._link_supersede(loser_id, keeper_id)
+
     # Best-effort: re-embed the keeper with merged content; remove loser
     try:
         semantic_search.upsert_for_fragment(keeper_id)
@@ -98,10 +112,6 @@ def merge(keeper_id: str, loser_id: str) -> dict | None:
         pass
     try:
         vstore.delete(loser_id)
-    except Exception:
-        pass
-    try:
-        frag_store.delete(loser_id)
     except Exception:
         pass
 
