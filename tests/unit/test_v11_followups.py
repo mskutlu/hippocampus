@@ -14,6 +14,7 @@ def _vec(*xs):
 
 
 def test_numpy_topk_matches_python_scan(hippo_env, monkeypatch):
+    pytest.importorskip("numpy")
     from hippocampus.embeddings import search, store
     from hippocampus.storage import fragments as F
 
