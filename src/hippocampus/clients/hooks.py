@@ -132,7 +132,7 @@ def _build_claude_format_entries(
                     {
                         "type": "command",
                         "command": f"bash {submit_path} {client}",
-                        "timeout": 10,
+                        "timeout": 30,
                         "tag": HOOK_TAG,
                     }
                 ],
