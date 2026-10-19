@@ -81,6 +81,9 @@ class Fragment:
     project: str | None = None
     review_state: str = "approved"
     superseded_by: str | None = None
+    helped_count: int = 0
+    hurt_count: int = 0
+    evidence_at: str | None = None
     tags: list[str] = field(default_factory=list)
     associated_with: list[str] = field(default_factory=list)
 
@@ -101,6 +104,9 @@ class Fragment:
             "project": self.project,
             "review_state": self.review_state,
             "superseded_by": self.superseded_by,
+            "helped_count": self.helped_count,
+            "hurt_count": self.hurt_count,
+            "evidence_at": self.evidence_at,
             "tags": list(self.tags),
             "associated_with": list(self.associated_with),
         }
@@ -123,6 +129,9 @@ def _row_to_fragment(row: sqlite3.Row, tags: list[str], assoc: list[str]) -> Fra
         project=row["project"] if "project" in row.keys() else None,
         review_state=row["review_state"],
         superseded_by=row["superseded_by"],
+        helped_count=int(row["helped_count"]),
+        hurt_count=int(row["hurt_count"]),
+        evidence_at=row["evidence_at"],
         tags=tags,
         associated_with=assoc,
     )
@@ -249,6 +258,9 @@ def update_fields(
     project: str | None | bool = False,  # False = don't touch, None = global, str = set
     review_state: str | None = None,
     superseded_by: str | None = None,
+    helped_delta: int = 0,
+    hurt_delta: int = 0,
+    evidence_at: str | None = None,
 ) -> Fragment | None:
     """Partial update. Mirror is refreshed after the transaction commits."""
     sets: list[str] = []
@@ -286,6 +298,15 @@ def update_fields(
     if superseded_by is not None:
         sets.append("superseded_by = ?")
         params.append(superseded_by)
+    if helped_delta:
+        sets.append("helped_count = helped_count + ?")
+        params.append(helped_delta)
+    if hurt_delta:
+        sets.append("hurt_count = hurt_count + ?")
+        params.append(hurt_delta)
+    if evidence_at is not None:
+        sets.append("evidence_at = ?")
+        params.append(evidence_at)
 
     # updated_at tracks content edits only; boosts/decay leave it alone so the
     # sync merge rule "newer updated_at wins" orders real edits (V11).

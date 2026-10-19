@@ -414,7 +414,7 @@ def current_session_id(
 
 
 def log_access(session_id: str, fragment_id: str, via: str = "recall") -> None:
-    """Record an access. `via='inject'` never overwrites a real recall."""
+    """Record an access. `via` precedence: recall > auto > inject."""
     now = _now()
     with get_conn() as conn:
         conn.execute(
@@ -423,7 +423,11 @@ def log_access(session_id: str, fragment_id: str, via: str = "recall") -> None:
             VALUES (?, ?, ?, ?)
             ON CONFLICT(session_id, fragment_id) DO UPDATE SET
                 accessed_at = excluded.accessed_at,
-                via = CASE WHEN session_accesses.via = 'recall' THEN 'recall' ELSE excluded.via END
+                via = CASE
+                    WHEN session_accesses.via = 'recall' OR excluded.via = 'recall' THEN 'recall'
+                    WHEN session_accesses.via = 'auto' OR excluded.via = 'auto' THEN 'auto'
+                    ELSE excluded.via
+                END
             """,
             (session_id, fragment_id, now, via),
         )

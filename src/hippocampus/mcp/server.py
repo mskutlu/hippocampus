@@ -133,7 +133,8 @@ TOOL_SPECS: list[Tool] = [
         name="mark",
         description=(
             "Explicit feedback on a recalled fragment. useful=true sets confidence to 1.0 "
-            "(the only way past the asymptotic boost); useful=false applies the negative delta."
+            "(the only way past the asymptotic boost); useful=false applies the negative delta. "
+            "Call mark(useful=true) after a recall that actually helped."
         ),
         inputSchema={
             "type": "object",

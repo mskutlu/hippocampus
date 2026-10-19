@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hippocampus.dynamics.outcomes import compress
 from hippocampus.storage.fragments import default_review_state
 
 CONTENT_FIELDS = (
@@ -37,8 +38,35 @@ def _with_review_defaults(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
-def merge_fragment(local: dict[str, Any] | None, remote: dict[str, Any]) -> dict[str, Any]:
-    """Return the row to store. With no local copy the remote wins outright."""
+def _remote_for_model(remote: dict[str, Any], rebase_compress: float | None) -> dict[str, Any]:
+    """Old peers carry access-model confidence; compress it when we run evidence."""
+    if rebase_compress is None or "evidence_at" in remote:
+        return remote
+    return {**remote, "confidence": compress(float(remote.get("confidence") or 0.0), rebase_compress)}
+
+
+def _merge_confidence(local: dict[str, Any], remote: dict[str, Any]) -> float:
+    lc, rc = float(local.get("confidence") or 0.0), float(remote.get("confidence") or 0.0)
+    if "evidence_at" not in local or "evidence_at" not in remote:
+        return max(lc, rc)
+    le, re_ = _ts(local.get("evidence_at")), _ts(remote.get("evidence_at"))
+    if le and re_:
+        return rc if re_ > le else lc
+    if le or re_:
+        return lc if le else rc
+    return max(lc, rc)
+
+
+def merge_fragment(
+    local: dict[str, Any] | None,
+    remote: dict[str, Any],
+    rebase_compress: float | None = None,
+) -> dict[str, Any]:
+    """Return the row to store. With no local copy the remote wins outright.
+
+    `rebase_compress` is set only under the evidence model.
+    """
+    remote = _remote_for_model(remote, rebase_compress)
     if local is None:
         out = dict(remote)
         out["tags"] = sorted(set(remote.get("tags") or []))
@@ -53,7 +81,11 @@ def merge_fragment(local: dict[str, Any] | None, remote: dict[str, Any]) -> dict
         [t for t in (_ts(local.get("created_at")), _ts(remote.get("created_at"))) if t] or [""]
     ) or None
     out["accessed"] = max(int(local.get("accessed") or 0), int(remote.get("accessed") or 0))
-    out["confidence"] = max(float(local.get("confidence") or 0.0), float(remote.get("confidence") or 0.0))
+    out["confidence"] = _merge_confidence(local, remote)
+    if "evidence_at" in local or "evidence_at" in remote:
+        out["evidence_at"] = max(_ts(local.get("evidence_at")), _ts(remote.get("evidence_at"))) or None
+        for key in ("helped_count", "hurt_count"):
+            out[key] = max(int(local.get(key) or 0), int(remote.get(key) or 0))
     out["last_accessed_at"] = max(_ts(local.get("last_accessed_at")), _ts(remote.get("last_accessed_at"))) or None
     if out["confidence"] >= ARCHIVE_THRESHOLD:
         out["below_threshold_since"] = None
@@ -67,7 +99,8 @@ def merge_fragment(local: dict[str, Any] | None, remote: dict[str, Any]) -> dict
 def changed(local: dict[str, Any] | None, merged: dict[str, Any]) -> bool:
     if local is None:
         return True
-    keys = (*CONTENT_FIELDS, "updated_at", "accessed", "confidence", "last_accessed_at", "below_threshold_since")
+    keys = (*CONTENT_FIELDS, "updated_at", "accessed", "confidence", "last_accessed_at", "below_threshold_since",
+            "evidence_at", "helped_count", "hurt_count")
     if any(local.get(k) != merged.get(k) for k in keys):
         return True
     return sorted(set(local.get("tags") or [])) != merged.get("tags")

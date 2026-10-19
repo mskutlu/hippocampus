@@ -175,6 +175,17 @@ _DEFAULTS: dict[str, Any] = {
     "backup_retention_count": 14,
     "transcript_capture_enabled": False,
     "transcript_retention_days": 30,
+    "confidence_model": "access",          # access | evidence
+    "evidence_helped_weak": 0.02,
+    "evidence_helped_medium": 0.05,
+    "evidence_helped_strong": 0.15,
+    "evidence_hurt_weak": 0.04,
+    "evidence_hurt_medium": 0.08,
+    "evidence_hurt_strong": 0.20,
+    "evidence_implicit_ceiling": 0.70,     # weak helped skipped at/above this
+    "evidence_correction_max_targets": 3,
+    "auto_pin_min_helped": 3,
+    "rebase_compress": 0.5,
 }
 
 

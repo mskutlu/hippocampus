@@ -22,6 +22,7 @@ from hippocampus.clients.injector import (
 )
 from hippocampus.clients.registry import CLIENTS, by_name
 from hippocampus.dynamics import boost as boost_dyn
+from hippocampus.dynamics import outcomes as outcomes_dyn
 from hippocampus.dynamics import ranking
 from hippocampus.storage import (
     associations,
@@ -702,6 +703,11 @@ def log_progress(
             demoted_id = negation_dyn.infer_and_forget(content, session_id=session_id)
         except Exception:
             demoted_id = None
+        if demoted_id is None and outcomes_dyn.recording_active():
+            try:
+                outcomes_dyn.on_ask(session_id, content, entry.id)
+            except Exception:
+                pass
 
     # Auto-tag / boost fragments referenced in the entry by explicit `frag_…` id.
     referenced_ids: list[str] = []
@@ -717,6 +723,11 @@ def log_progress(
             client=client_name,
         )
         referenced_ids.append(match)
+    if kind == "done" and referenced_ids and outcomes_dyn.recording_active():
+        try:
+            outcomes_dyn.on_done_cites(session_id, referenced_ids)
+        except Exception:
+            pass
 
     # v1.6.0 — also boost the top-K semantically-matched fragments (A5 + C2).
     # Means every log_progress reinforces the knowledge graph, not just entries
@@ -751,6 +762,7 @@ def log_progress(
                     session_id=session_id,
                     client=client_name,
                     cluster_propagate=True,
+                    via="auto" if outcomes_dyn.evidence_mode() else "recall",
                 )
                 auto_boosted = keepers
     except Exception:
@@ -974,6 +986,13 @@ def get_transcript(client: str | None = None, limit: int = 200) -> dict[str, Any
     }
 
 
+def _settle_outcomes(session_id: str) -> None:
+    try:
+        outcomes_dyn.settle_session(session_id)
+    except Exception:
+        pass
+
+
 def end_progress(
     distill_to_fragment: bool = False,
     summary: str | None = None,
@@ -1011,6 +1030,7 @@ def end_progress(
         sid, client_name, entries, status="completed", final_summary=summary
     )
 
+    _settle_outcomes(sid)
     new_sid = sessions.rotate(client_name)
     _refresh_working_block(client_name)
 
@@ -1071,6 +1091,7 @@ def auto_end_idle_sessions() -> dict[str, Any]:
                 distilled_id = None
 
         _write_session_handoff(sid, client, entries, status="auto-closed")
+        _settle_outcomes(sid)
         sessions.close_session(sid)
         _refresh_working_block(client, session_key=session_key)
         ended.append({

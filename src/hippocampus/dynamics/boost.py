@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Sequence
 
 from hippocampus import config
+from hippocampus.dynamics import outcomes
 from hippocampus.storage import associations, feedback, fragments as frag_store, sessions
 
 
@@ -30,12 +31,33 @@ def boost_delta(confidence: float) -> float:
     return config.BOOST_DELTA * max(0.0, 1.0 - confidence)
 
 
+def record_access(
+    fragment_id: str,
+    *,
+    session_id: str | None,
+    confidence: float | None = None,
+    via: str = "recall",
+) -> frag_store.Fragment | None:
+    """Count an access and shield the fragment from auto-archive."""
+    updated = frag_store.update_fields(
+        fragment_id,
+        confidence=confidence,
+        accessed_delta=1,
+        last_accessed_at=_utc_now(),
+        below_threshold_since=None,  # clear any pending-archive flag
+    )
+    if session_id:
+        sessions.log_access(session_id, fragment_id, via=via)
+    return updated
+
+
 def boost(
     fragment_id: str,
     *,
     context_tag: str | None = None,
     session_id: str | None = None,
     client: str | None = None,
+    via: str = "recall",
 ) -> frag_store.Fragment | None:
     """Apply access boost to a single fragment. Returns the updated fragment."""
     current = frag_store.get(fragment_id)
@@ -44,23 +66,18 @@ def boost(
 
     if session_id is None and client:
         session_id = sessions.current_session_id(client, open_if_missing=True)
+    if outcomes.evidence_mode():
+        updated = record_access(fragment_id, session_id=session_id, via=via)
+        feedback.log(fragment_id, "access", delta=0.0, reason=context_tag, session_id=session_id)
+        return updated
+
     if session_id and fragment_id in sessions.injected_fragment_ids(session_id):
         return current
 
     delta = boost_delta(current.confidence)
     new_conf = min(config.CONFIDENCE_MAX, current.confidence + delta)
-    now = _utc_now()
 
-    updated = frag_store.update_fields(
-        fragment_id,
-        confidence=new_conf,
-        accessed_delta=1,
-        last_accessed_at=now,
-        below_threshold_since=None,  # clear any pending-archive flag
-    )
-
-    if session_id:
-        sessions.log_access(session_id, fragment_id)
+    updated = record_access(fragment_id, session_id=session_id, confidence=new_conf, via=via)
 
     feedback.log(
         fragment_id,
@@ -99,6 +116,7 @@ def boost_many(
     session_id: str | None = None,
     client: str | None = None,
     cluster_propagate: bool = False,
+    via: str = "recall",
 ) -> list[frag_store.Fragment]:
     """Boost every fragment in the list + strengthen all pairwise associations.
 
@@ -108,13 +126,13 @@ def boost_many(
     """
     updated: list[frag_store.Fragment] = []
     for fid in fragment_ids:
-        f = boost(fid, context_tag=context_tag, session_id=session_id, client=client)
+        f = boost(fid, context_tag=context_tag, session_id=session_id, client=client, via=via)
         if f is not None:
             updated.append(f)
     if len(fragment_ids) > 1:
         associations.strengthen_all(fragment_ids)
 
-    if cluster_propagate and updated:
+    if cluster_propagate and updated and not outcomes.evidence_mode():
         factor = float(config.get_setting("cluster_boost_factor") or 0.0)
         if factor > 0.0:
             neighbor_delta = config.BOOST_DELTA * factor
@@ -167,6 +185,13 @@ def mark_useful(fragment_id: str, session_id: str | None = None) -> frag_store.F
     current = frag_store.get(fragment_id)
     if current is None:
         return None
+    if outcomes.shadow_mode():
+        outcomes.shadow_apply(session_id, fragment_id, "helped", "strong", "mark_useful")
+    if outcomes.evidence_mode():
+        delta = outcomes.apply(session_id, fragment_id, "helped", "strong", "mark_useful")
+        if delta is not None:
+            feedback.log(fragment_id, "useful", delta=delta, session_id=session_id)
+        return frag_store.get(fragment_id)
     updated = frag_store.update_fields(
         fragment_id,
         confidence=config.CONFIDENCE_MAX,
@@ -192,6 +217,13 @@ def apply_negative_feedback(
     current = frag_store.get(fragment_id)
     if current is None:
         return None
+    if outcomes.shadow_mode() and reason != "user_negation_inferred":
+        outcomes.shadow_apply(session_id, fragment_id, "hurt", "strong", "explicit")
+    if outcomes.evidence_mode():
+        delta = outcomes.apply(session_id, fragment_id, "hurt", "strong", "explicit")
+        if delta is not None:
+            feedback.log(fragment_id, "negative", delta=delta, reason=reason, session_id=session_id)
+        return frag_store.get(fragment_id)
     new_conf = max(config.CONFIDENCE_MIN, current.confidence - config.FEEDBACK_DELTA)
     updated = frag_store.update_fields(fragment_id, confidence=new_conf)
     feedback.log(
