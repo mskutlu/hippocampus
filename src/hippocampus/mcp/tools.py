@@ -16,6 +16,7 @@ from hippocampus import config
 from hippocampus.clients.injector import (
     format_injection_block,
     format_working_block,
+    remove_working_block,
     upsert_block,
     upsert_working_block,
 )
@@ -533,6 +534,9 @@ def _refresh_working_block(client: str, session_key: str | None = None) -> None:
     """
     spec = by_name(client)
     if spec is None:
+        return
+    if not spec.rules_working_block:
+        remove_working_block(spec.rules_path)
         return
     try:
         sid = sessions.current_session_id(client, session_key=session_key, open_if_missing=False)

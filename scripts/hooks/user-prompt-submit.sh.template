@@ -41,7 +41,25 @@ detect_hippo_context() {
 
 detect_hippo_context
 
+bind_claude_session() {
+    [[ "$CLIENT" == "claude-code" ]] || return 0
+    local sid
+    sid=$(python3 -c '
+import json, sys
+try:
+    print(json.loads(sys.stdin.read() or "{}").get("session_id") or "")
+except Exception:
+    pass
+' <<< "${INPUT_JSON:-}" 2>/dev/null || true)
+    sid="${sid:-${CLAUDE_CODE_SESSION_ID:-}}"
+    [[ -n "$sid" ]] || return 0
+    # Same claude session across cwd changes.
+    export HIPPOCAMPUS_SESSION_KEY="cc-${sid}"
+    export HIPPOCAMPUS_CLAUDE_PID="$PPID"
+}
+
 INPUT_JSON="$(cat || true)"
+bind_claude_session
 
 PROMPT=""
 FULL_PROMPT_FILE=""

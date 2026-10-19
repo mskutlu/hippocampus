@@ -248,6 +248,7 @@ def session_start(client: str, session_key: Optional[str], force_new: bool) -> N
     _bootstrap()
     from hippocampus.storage import sessions
 
+    sessions.bind_parent_pid()
     sid = (
         sessions.rotate(client, session_key=session_key)
         if force_new
@@ -770,7 +771,7 @@ def restore_cmd(backup_path: Path) -> None:
 
 
 @cli.command()
-@click.option("--limit", default=None, type=int, help=f"top-N (default: {config.TOP_N_DEFAULT})")
+@click.option("--limit", default=None, type=int, help="top-N (default: rules_fragment_limit setting)")
 @click.option("--only", multiple=True, help="Only inject into these clients (repeatable)")
 @click.option("--dry-run/--commit", default=False)
 @click.option("--no-sync", is_flag=True, help="Skip the device sync that follows inject when sync_enabled")
@@ -792,6 +793,7 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool, no_sync: bool) -> N
     from hippocampus.clients.injector import (
         format_injection_block,
         format_working_block,
+        remove_working_block,
         upsert_block,
         upsert_working_block,
     )
@@ -802,6 +804,8 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool, no_sync: bool) -> N
 
     # Rules files carry global (project-less) memory only; project memory
     # reaches the model through the hook payload, which knows the cwd (V11).
+    if limit is None:
+        limit = int(config.get_setting("rules_fragment_limit"))
     frags = ranking.top_n(limit=limit, scope="global")
     long_block = format_injection_block(frags)
 
@@ -836,7 +840,8 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool, no_sync: bool) -> N
         )
 
         if dry_run:
-            click.echo(f"{spec.name}: would upsert 2 blocks into {spec.rules_path}")
+            blocks = 2 if spec.rules_working_block else 1
+            click.echo(f"{spec.name}: would upsert {blocks} blocks into {spec.rules_path}")
             continue
         try:
             _, l_reason = upsert_block(
@@ -844,11 +849,15 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool, no_sync: bool) -> N
                 create_if_missing=True,
                 header_when_creating=spec.creation_header,
             )
-            _, w_reason = upsert_working_block(
-                spec.rules_path, working_block,
-                create_if_missing=True,
-                header_when_creating=spec.creation_header,
-            )
+            if spec.rules_working_block:
+                _, w_reason = upsert_working_block(
+                    spec.rules_path, working_block,
+                    create_if_missing=True,
+                    header_when_creating=spec.creation_header,
+                )
+            else:
+                removed = remove_working_block(spec.rules_path)
+                w_reason = "removed" if removed else "disabled"
             click.echo(f"{spec.name}: long={l_reason} working={w_reason} ({spec.rules_path})")
         except Exception as e:  # noqa: BLE001
             click.echo(f"{spec.name}: error {e}")
@@ -1222,6 +1231,9 @@ def context_cmd(
     os.environ["HIPPOCAMPUS_CLIENT"] = client
     _bootstrap()
     from hippocampus.clients import hook_context
+    from hippocampus.storage import sessions
+
+    sessions.bind_parent_pid()
 
     settings = config.all_settings()
     payload = hook_context.render_context(

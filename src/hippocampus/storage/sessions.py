@@ -147,15 +147,61 @@ def _detect_workspace() -> str | None:
         return first
 
 
-def derive_session_key(session_key: str | None = None) -> str:
+CLAUDE_CODE_CLIENT = "claude-code"
+
+
+def claude_session_key(claude_session_id: str) -> str:
+    return _safe_part(f"cc-{claude_session_id.strip()}")
+
+
+def _pid_pointer_path(pid: int | str):
+    return config.SESSION_POINTER_DIR / "ppid" / f"{_safe_part(str(pid))}.key"
+
+
+def bind_parent_pid() -> None:
+    """Map the hooks' `claude` pid to their session key (read via getppid)."""
+    pid = (os.environ.get("HIPPOCAMPUS_CLAUDE_PID") or "").strip()
+    key = (os.environ.get("HIPPOCAMPUS_SESSION_KEY") or "").strip()
+    if not pid.isdigit() or not key:
+        return
+    key = _safe_part(key)
+    path = _pid_pointer_path(pid)
+    try:
+        if path.exists() and path.read_text(encoding="utf-8").strip() == key:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.write_text(key, encoding="utf-8")
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _claude_code_key(client: str | None) -> str | None:
+    """Key for a Claude Code process without an explicit key (the MCP server)."""
+    name = (client or os.environ.get("HIPPOCAMPUS_CLIENT") or "").strip().lower()
+    if name != CLAUDE_CODE_CLIENT:
+        return None
+    try:
+        bound = _pid_pointer_path(os.getppid()).read_text(encoding="utf-8").strip()
+    except OSError:
+        bound = ""
+    if bound:
+        return _safe_part(bound)
+    claude_sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    return claude_session_key(claude_sid) if claude_sid else None
+
+
+def derive_session_key(session_key: str | None = None, client: str | None = None) -> str:
     """Return the stable context key for this client process.
 
     Precedence:
       1. explicit argument / HIPPOCAMPUS_SESSION_KEY
-      2. terminal TTY (or terminal-session env) + cwd   — terminal clients
-      3. workspace root (WORKSPACE_FOLDER_PATHS)         — GUI editors w/o a TTY
-      4. cwd-only
-      5. "default" for non-terminal contexts with no signal
+      2. claude-code only: key bound to the parent `claude` pid by the hooks,
+         else ``cc-<CLAUDE_CODE_SESSION_ID>``                — never tty/cwd
+      3. terminal TTY (or terminal-session env) + cwd   — terminal clients
+      4. workspace root (WORKSPACE_FOLDER_PATHS)         — GUI editors w/o a TTY
+      5. cwd-only
+      6. "default" for non-terminal contexts with no signal
 
     GUI editors (Cursor, VS Code) are keyed off the workspace root rather than
     cwd: they launch the MCP server and the hooks from different, unstable cwds,
@@ -167,6 +213,10 @@ def derive_session_key(session_key: str | None = None) -> str:
     explicit = (session_key or os.environ.get("HIPPOCAMPUS_SESSION_KEY") or "").strip()
     if explicit:
         return _safe_part(explicit)
+
+    claude_key = _claude_code_key(client)
+    if claude_key:
+        return claude_key
 
     tty = _detect_tty()
     cwd = _detect_cwd()
@@ -256,7 +306,7 @@ def resolve_project() -> str | None:
 def open_session(client: str, session_key: str | None = None) -> str:
     """Open or reuse the active session for a client/context."""
     client = _clean_client(client)
-    key = derive_session_key(session_key)
+    key = derive_session_key(session_key, client)
     config.ensure_dirs()
     sid = f"sess_{ULID()}"
     project = resolve_project()
@@ -292,7 +342,7 @@ def rotate(client: str, session_key: str | None = None) -> str:
     appearing in the rendered WORKING block.
     """
     client_name = _clean_client(client)
-    key = derive_session_key(session_key)
+    key = derive_session_key(session_key, client_name)
     try:
         current = current_session_id(client_name, session_key=key, open_if_missing=False)
         close_session(current)
@@ -335,7 +385,7 @@ def current_session_id(
 ) -> str:
     """Return the active session id for a client/context. Opens one if needed."""
     client_name = _clean_client(client)
-    key = derive_session_key(session_key)
+    key = derive_session_key(session_key, client_name)
     p = _pointer_path(client_name, key)
     if p.exists():
         sid = p.read_text(encoding="utf-8").strip()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hippocampus SessionStart hook for Devin-for-Terminal / Claude Code.
 #
-# Stdin: JSON from the client (ignored — event data not needed).
+# Stdin: JSON from the client (only `session_id` is read, for claude-code).
 # Stdout: JSON object with hookSpecificOutput.additionalContext injected
 #         into the model's context on session start.
 #
@@ -37,6 +37,29 @@ detect_hippo_context() {
 
 detect_hippo_context
 
+bind_claude_session() {
+    [[ "$CLIENT" == "claude-code" ]] || return 0
+    local sid
+    sid=$(python3 -c '
+import json, sys
+try:
+    print(json.loads(sys.stdin.read() or "{}").get("session_id") or "")
+except Exception:
+    pass
+' <<< "${INPUT_JSON:-}" 2>/dev/null || true)
+    sid="${sid:-${CLAUDE_CODE_SESSION_ID:-}}"
+    [[ -n "$sid" ]] || return 0
+    # Same claude session across cwd changes.
+    export HIPPOCAMPUS_SESSION_KEY="cc-${sid}"
+    export HIPPOCAMPUS_CLAUDE_PID="$PPID"
+}
+
+INPUT_JSON=""
+if [[ "$CLIENT" == "claude-code" ]]; then
+    INPUT_JSON="$(cat || true)"
+fi
+bind_claude_session
+
 # Best-effort: open/rotate a session for this client so `hippo progress show`
 # reflects reality from turn 0.
 if [[ -x "$HIPPO_BIN" ]]; then
@@ -69,11 +92,10 @@ Long-term memory (cross-session, cross-client):
 - If remember returns similar fragments, prefer supersedes="<id>" over a parallel fragment.
 - At task completion, call end_progress(distill_to_fragment=true, summary="...") to rotate the session and condense the ledger into a long-term fragment.
 
-The top-N long-term fragments and the live working ledger are injected in
-your rules file under the HIPPOCAMPUS blocks AND, on every turn, as
-additionalContext from this hook. Trust the additionalContext payload over
-the rules-file snapshot when they disagree — the rules file is loaded once
-at session start and may be stale after compaction.
+The live working ledger and the top long-term fragments are injected on
+every turn as additionalContext from this hook; that payload is the source
+of truth. Rules files may also carry a HIPPOCAMPUS block (global fragments,
+and for some clients a WORKING snapshot) that is loaded once and may be stale.
 EOF
 )
 
