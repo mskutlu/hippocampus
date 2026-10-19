@@ -20,6 +20,7 @@ from typing import Any, Callable
 from ulid import ULID
 
 from hippocampus import config, projects
+from hippocampus.dynamics import outcomes
 from hippocampus.storage import fragments as frag_store
 from hippocampus.storage.db import get_conn, get_ro_conn
 from hippocampus.sync import merge
@@ -57,7 +58,10 @@ def _frag_sig(row: dict, emb_b64: str | None) -> str:
     import hashlib
 
     emb = hashlib.sha1(emb_b64.encode("ascii")).hexdigest()[:8] if emb_b64 else ""
-    return f"{row.get('updated_at') or ''}|{row.get('last_accessed_at') or ''}|{row.get('accessed') or 0}|{row.get('confidence') or 0}|{emb}"
+    sig = f"{row.get('updated_at') or ''}|{row.get('last_accessed_at') or ''}|{row.get('accessed') or 0}|{row.get('confidence') or 0}|{emb}"
+    if row.get("evidence_at"):
+        sig += f"|{row['evidence_at']}|{row.get('helped_count') or 0}|{row.get('hurt_count') or 0}"
+    return sig
 
 
 def _assoc_sig(row: dict) -> str:
@@ -155,8 +159,9 @@ def collect_ops(since: str) -> list[dict[str, Any]]:
             SELECT f.* FROM fragments f
             LEFT JOIN fragment_embeddings e ON e.fragment_id = f.id
             WHERE f.updated_at > ? OR COALESCE(f.last_accessed_at, '') > ? OR COALESCE(e.created_at, '') > ?
+               OR COALESCE(f.evidence_at, '') > ?
             """,
-            (since, since, since),
+            (since, since, since, since),
         ).fetchall()
         for row in rows:
             payload = _fragment_payload(conn, row)
@@ -165,7 +170,7 @@ def collect_ops(since: str) -> list[dict[str, Any]]:
                 continue
             ops.append({
                 "entity": "fragment", "entity_id": row["id"], "op": "upsert",
-                "updated_at": max(row["updated_at"] or "", row["last_accessed_at"] or "", _now() if emb_b64 else ""),
+                "updated_at": max(row["updated_at"] or "", row["last_accessed_at"] or "", row["evidence_at"] or "", _now() if emb_b64 else ""),
                 "payload": payload,
             })
         for row in conn.execute("SELECT fragment_id, deleted_at FROM fragment_tombstones WHERE deleted_at > ?", (since,)).fetchall():
@@ -212,15 +217,17 @@ def _write_fragment(conn, merged: dict[str, Any]) -> None:
         """
         INSERT INTO fragments (id, content, summary, source_type, source_ref, confidence, accessed,
                                last_accessed_at, created_at, updated_at, pinned, below_threshold_since, project,
-                               review_state, superseded_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               review_state, superseded_by, helped_count, hurt_count, evidence_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             content = excluded.content, summary = excluded.summary, source_type = excluded.source_type,
             source_ref = excluded.source_ref, confidence = excluded.confidence, accessed = excluded.accessed,
             last_accessed_at = excluded.last_accessed_at, created_at = excluded.created_at,
             updated_at = excluded.updated_at, pinned = excluded.pinned,
             below_threshold_since = excluded.below_threshold_since, project = excluded.project,
-            review_state = excluded.review_state, superseded_by = excluded.superseded_by
+            review_state = excluded.review_state, superseded_by = excluded.superseded_by,
+            helped_count = excluded.helped_count, hurt_count = excluded.hurt_count,
+            evidence_at = excluded.evidence_at
         """,
         (
             merged["id"], merged.get("content") or "", merged.get("summary") or "",
@@ -229,6 +236,7 @@ def _write_fragment(conn, merged: dict[str, Any]) -> None:
             merged.get("last_accessed_at"), merged.get("created_at") or _now(), merged.get("updated_at") or _now(),
             1 if merged.get("pinned") else 0, merged.get("below_threshold_since"), merged.get("project"),
             merged.get("review_state") or "approved", merged.get("superseded_by"),
+            int(merged.get("helped_count") or 0), int(merged.get("hurt_count") or 0), merged.get("evidence_at"),
         ),
     )
     conn.executemany(
@@ -283,6 +291,7 @@ def _upsert_association(conn, payload: dict[str, Any]) -> bool:
 
 def apply_ops(ops: list[dict[str, Any]]) -> dict[str, int]:
     stats = {"fragments": 0, "deleted": 0, "associations": 0, "config": 0, "skipped": 0}
+    rebase_compress = float(config.get_setting("rebase_compress")) if outcomes.evidence_mode() else None
     with get_conn() as conn:
         for op in ops:
             entity, eid, payload = op.get("entity"), op.get("entity_id"), op.get("payload") or {}
@@ -291,7 +300,7 @@ def apply_ops(ops: list[dict[str, Any]]) -> dict[str, int]:
                     stats["skipped"] += 1
                     continue
                 local = _local_fragment(conn, eid)
-                merged = merge.merge_fragment(local, payload)
+                merged = merge.merge_fragment(local, payload, rebase_compress=rebase_compress)
                 row_changed = merge.changed(local, merged)
                 if row_changed:
                     _write_fragment(conn, merged)

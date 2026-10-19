@@ -72,7 +72,7 @@ def test_migration_014_backfills_review_state_and_unpins_auto_pins(hippo_env, tm
         "frag_manual": ("approved", 1, None),
     }
     assert sorted(r["fragment_id"] for r in unpins) == ["frag_autopinned", "frag_pinned_no_log"]
-    assert version == 14
+    assert version >= 14
 
 
 def test_create_derives_review_state(hippo_env):

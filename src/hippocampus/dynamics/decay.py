@@ -57,6 +57,13 @@ def run_decay_cycle(*, dry_run: bool = False) -> DecayResult:
     across all clients). This is generous on purpose: if the user did anything
     in the last session, their memories are safe for one more cycle.
     """
+    try:
+        from hippocampus.dynamics import outcomes
+        if not dry_run:
+            outcomes.settle_pending()
+    except Exception:
+        pass
+
     # Rotate idle sessions BEFORE decay so the shield window reflects them.
     try:
         from hippocampus.mcp import tools as _tools

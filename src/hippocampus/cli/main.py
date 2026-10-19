@@ -1138,6 +1138,56 @@ def config_set(key: str, value: str) -> None:
     click.echo(json.dumps({"set": {normalised_key: parsed}, "all": config.all_settings()}, indent=2))
 
 
+@cli.group(name="confidence")
+def confidence_group() -> None:
+    """Evidence-model confidence tools."""
+
+
+@confidence_group.command("report")
+@click.option("--since", default=None, help="ISO date/time; only outcomes created at or after it")
+def confidence_report(since: str | None) -> None:
+    """Counts, top would-be movers and fired correction asks."""
+    _bootstrap()
+    from hippocampus.dynamics import outcome_report
+
+    click.echo(json.dumps(outcome_report.build(since), indent=2, ensure_ascii=False))
+
+
+@confidence_group.command("mark-settled")
+def confidence_mark_settled() -> None:
+    """Mark all ended, unsettled sessions as settled so history is never replayed."""
+    _bootstrap()
+    from hippocampus.dynamics import outcomes
+
+    click.echo(json.dumps({"marked": outcomes.mark_ended_settled()}))
+
+
+@confidence_group.command("rebase")
+@click.option("--dry-run", "mode", flag_value="dry-run", help="Print what would change; write nothing")
+@click.option("--apply", "mode", flag_value="apply", help="Back up, then rebase confidence and auto-pins")
+@click.option("--restore", "mode", flag_value="restore", help="Restore confidence and pins from the backup")
+@click.option("--force", is_flag=True, help="Allow --apply when confidence_model is not 'evidence'")
+def confidence_rebase(mode: str | None, force: bool) -> None:
+    """Reversibly rebase access-model confidence for the evidence model."""
+    _bootstrap()
+    from hippocampus.dynamics import rebase
+
+    if mode is None:
+        raise click.UsageError("choose one of --dry-run, --apply, --restore")
+    if mode == "apply" and not force:
+        from hippocampus.dynamics import outcomes
+
+        if not outcomes.evidence_mode():
+            raise click.ClickException(
+                "rebase --apply requires confidence_model=evidence (or pass --force)"
+            )
+    try:
+        result = {"dry-run": rebase.dry_run, "apply": rebase.apply, "restore": rebase.restore}[mode]()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps({mode: result}, indent=2))
+
+
 # ---------------------------------------------------------------------------
 # embeddings / reindex
 # ---------------------------------------------------------------------------

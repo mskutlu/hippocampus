@@ -119,3 +119,49 @@ def test_pre_gate_pin_on_candidate_is_dropped():
 
     approved = _frag(source_type="session-summary", review_state="approved", pinned=1)
     assert merge.merge_fragment(approved, remote)["pinned"] == 1
+
+
+def test_old_format_remote_is_compressed_before_max():
+    local = _frag(confidence=0.6, evidence_at="2026-02-01T00:00:00.000Z", helped_count=1, hurt_count=0)
+    remote = _frag(confidence=0.95)
+    out = merge.merge_fragment(local, remote, rebase_compress=0.5)
+    assert out["confidence"] == 0.725
+    assert merge.merge_fragment(local, remote)["confidence"] == 0.95
+
+
+def test_old_format_new_row_is_compressed():
+    out = merge.merge_fragment(None, _frag(confidence=0.9), rebase_compress=0.5)
+    assert out["confidence"] == 0.7
+
+
+def test_newer_evidence_wins_and_counters_take_max():
+    local = _frag(confidence=0.4, evidence_at="2026-02-02T00:00:00.000Z", helped_count=1, hurt_count=2)
+    remote = _frag(confidence=0.8, evidence_at="2026-02-01T00:00:00.000Z", helped_count=3, hurt_count=0)
+    out = merge.merge_fragment(local, remote)
+    assert out["confidence"] == 0.4 and out["evidence_at"] == "2026-02-02T00:00:00.000Z"
+    assert (out["helped_count"], out["hurt_count"]) == (3, 2)
+    swapped = merge.merge_fragment(remote, local)
+    assert swapped["confidence"] == 0.4
+
+
+def test_evidence_side_beats_peer_without_evidence():
+    local = _frag(confidence=0.4, evidence_at="2026-02-02T00:00:00.000Z", helped_count=0, hurt_count=1)
+    remote = _frag(confidence=0.9, evidence_at=None, helped_count=0, hurt_count=0)
+    assert merge.merge_fragment(local, remote)["confidence"] == 0.4
+
+
+def test_demotion_produces_an_op(hippo_env):
+    from hippocampus.dynamics import outcomes
+    from hippocampus.storage import fragments as F
+    from hippocampus.sync import client
+
+    fid = F.create("demote me").id
+    F.update_fields(fid, confidence=0.9)
+    cutoff = F.get(fid).last_accessed_at or "9999"
+    since = F.get(fid).updated_at
+    assert client.collect_ops(since) == []
+    outcomes.apply("sess_x", fid, "hurt", "strong", "explicit")
+    ops = client.collect_ops(since)
+    assert [o["entity_id"] for o in ops] == [fid]
+    assert ops[0]["payload"]["confidence"] == 0.7 and ops[0]["payload"]["hurt_count"] == 1
+    assert cutoff
