@@ -26,6 +26,7 @@ class ClientSpec:
     creation_header: str            # header used when creating a fresh rules file
     mcp_config_path: Path | None    # where to register the MCP server (optional)
     mcp_config_format: str          # 'devin-json' | 'claude-json' | 'windsurf-mcp' | 'opencode-json' | 'vscode-mcp-json' | 'cursor-mcp-json' | 'codex-toml' | 'pi-extension' | 'zcode-json' | 'zed-json' | 'hermes-yaml'
+    rules_working_block: bool = True  # False: shared file, hooks carry it
 
     @property
     def exists(self) -> bool:
@@ -101,6 +102,7 @@ CLIENTS: list[ClientSpec] = [
         creation_header="# Claude Code Global Rules",
         mcp_config_path=HOME / ".claude.json",
         mcp_config_format="claude-json",
+        rules_working_block=False,
     ),
     ClientSpec(
         name="opencode",

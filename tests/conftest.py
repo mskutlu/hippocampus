@@ -26,7 +26,11 @@ def hippo_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HIPPOCAMPUS_HOME", str(home))
     monkeypatch.setenv("HIPPOCAMPUS_VAULT", str(vault))
     monkeypatch.setenv("HIPPOCAMPUS_CLIENT", "pytest")
+    # Registry rules paths must not hit real files.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("HIPPO_EMBEDDING_PROVIDER", "disabled")
+    for name in ("CLAUDE_CODE_SESSION_ID", "HIPPOCAMPUS_CLAUDE_PID", "HIPPOCAMPUS_SESSION_KEY"):
+        monkeypatch.delenv(name, raising=False)
 
     # Force-reload modules that cached paths at import time.
     for mod_name in list(sys.modules):

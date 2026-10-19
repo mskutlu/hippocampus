@@ -132,6 +132,7 @@ _DEFAULTS: dict[str, Any] = {
     "hook_inject_fragments": True,         # include top-N long-term fragments
     "hook_fragment_limit": 5,              # max fragments per hook payload
     "hook_inject_budget_chars": 3500,      # hard cap on hook additionalContext
+    "rules_fragment_limit": 5,             # global fragments in rules files (~500 tokens)
     # V9 — passive autonomy + biology recalibration
     "decay_skip_recent_days": 30,          # don't decay fragments accessed in last N days
     "auto_distill_min_entries": 3,         # idle session must have >= N entries to distill

@@ -486,6 +486,13 @@ a first-class discriminator and the current workspace path as supporting
 context. This avoids mixing unrelated work when you run several Codex, Claude
 Code, Devin, Cursor, or Pi sessions at once.
 
+Claude Code is keyed on its own `session_id` instead (`cc-<session_id>`), so a
+`cd` mid-conversation never opens a new session. The hooks record that key per
+parent `claude` pid; the MCP server, a child of the same process, reads it via
+its parent pid and falls back to `CLAUDE_CODE_SESSION_ID`. Claude Code's
+working ledger reaches the model only through hook `additionalContext`, never
+the shared `~/.claude/CLAUDE.md`.
+
 Empty sessions are cleaned up by `hippo cleanup-sessions`, and the normal health
 flow reports session bloat through `hippo doctor` / `hippo health`.
 

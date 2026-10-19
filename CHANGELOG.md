@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Fixed — Claude Code session identity
+
+- Claude Code sessions key on Claude's `session_id` (`cc-<id>`), not TTY + cwd.
+  A `cd` mid-conversation no longer rotates the Hippocampus session. The hooks
+  bind the key to the parent `claude` pid; the MCP server resolves it through
+  `os.getppid()` (survives `/clear`), else `CLAUDE_CODE_SESSION_ID`.
+- The per-session WORKING block is no longer written to the global
+  `~/.claude/CLAUDE.md` (concurrent sessions overwrote each other); `hippo
+  inject` and `log_progress` strip an existing one. Other clients unchanged.
+- New setting `rules_fragment_limit` (default 5, was 15) caps the global
+  fragment block `hippo inject` writes into every rules file.
+- Tests redirect `HOME`, so the suite no longer writes real rules files.
+
 ### Added — dreaming: agent-driven distillation of the candidate queue
 
 - `hippo dream [--limit N]` prints a self-contained prompt for any agent
