@@ -165,3 +165,26 @@ def test_demotion_produces_an_op(hippo_env):
     assert [o["entity_id"] for o in ops] == [fid]
     assert ops[0]["payload"]["confidence"] == 0.7 and ops[0]["payload"]["hurt_count"] == 1
     assert cutoff
+
+
+def test_pulled_tombstone_keeps_original_time_and_is_not_echoed(hippo_env):
+    from hippocampus.storage import fragments as F
+    from hippocampus.sync import client
+
+    fid = F.create("deleted long ago").id
+    payload = client.collect_ops("")[0]["payload"]
+    old = "2026-01-01T00:00:00.000000Z"
+    payload["updated_at"] = "2025-12-31T00:00:00.000000Z"
+    with client.get_conn() as conn:
+        conn.execute("DELETE FROM fragments WHERE id = ?", (fid,))
+        conn.execute("DELETE FROM fragment_tombstones")
+    # A fresh device replays history: the upsert, then the old delete.
+    client.apply_ops([
+        {"entity": "fragment", "entity_id": fid, "op": "upsert", "payload": payload},
+        {"entity": "tombstone", "entity_id": fid, "op": "delete", "payload": {"deleted_at": old}},
+    ])
+    assert F.get(fid) is None
+    with client.get_ro_conn() as conn:
+        row = conn.execute("SELECT deleted_at FROM fragment_tombstones WHERE fragment_id = ?", (fid,)).fetchone()
+    assert row["deleted_at"] == old
+    assert client.collect_ops("") == []

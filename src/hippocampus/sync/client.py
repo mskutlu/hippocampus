@@ -174,6 +174,8 @@ def collect_ops(since: str) -> list[dict[str, Any]]:
                 "payload": payload,
             })
         for row in conn.execute("SELECT fragment_id, deleted_at FROM fragment_tombstones WHERE deleted_at > ?", (since,)).fetchall():
+            if applied.get(f"tomb:{row['fragment_id']}") == row["deleted_at"]:
+                continue
             ops.append({
                 "entity": "tombstone", "entity_id": row["fragment_id"], "op": "delete",
                 "updated_at": row["deleted_at"], "payload": {"deleted_at": row["deleted_at"]},
@@ -315,8 +317,13 @@ def apply_ops(ops: list[dict[str, Any]]) -> dict[str, int]:
                 stats["fragments"] += 1
             elif entity == "tombstone":
                 local = _local_fragment(conn, eid)
-                if merge.tombstone_wins(local, payload.get("deleted_at") or ""):
+                deleted_at = payload.get("deleted_at") or ""
+                if merge.tombstone_wins(local, deleted_at):
                     conn.execute("DELETE FROM fragments WHERE id = ?", (eid,))
+                    # The delete trigger stamps now(); keep the original delete
+                    # time so it can't beat edits made after it, and don't echo it.
+                    conn.execute("UPDATE fragment_tombstones SET deleted_at = ? WHERE fragment_id = ?", (deleted_at, eid))
+                    _mark_applied(conn, f"tomb:{eid}", deleted_at)
                     stats["deleted"] += 1
                 else:
                     stats["skipped"] += 1
