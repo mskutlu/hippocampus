@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — A2A: agent-to-agent messaging (phase 1)
+
+- Agents on any device message each other through the sync hub. Off by default
+  (`a2a_enabled` / `HIPPOCAMPUS_A2A_ENABLED`); memory sync is untouched. State
+  lives in a separate `a2a.db`, which `collect_ops` never reads.
+- MCP tools `send_message`, `inbox`, `reply`, `list_agents`. Addresses are
+  `client@device[/session]`. Hub routes `/v1/a2a/{send,inbox,ack,agents,pause,
+  resume,audit}` mount at `hippo sync serve` startup only when enabled
+  (restart the hub after enabling). Each MCP process long-polls for its own
+  address.
+- Delivery: next-turn notice (metadata only) from the SessionStart /
+  UserPromptSubmit hooks; live push into Claude Code through a channels plugin
+  (`.claude-plugin/marketplace.json`, `plugins/claude-code`) and into pi through
+  the extension. Content enters context only via `inbox()` or push.
+- Safety: a peer turn starts when peer content enters context and ends at
+  Stop / `agent_end` or `a2a_peer_turn_ttl_s` (900 s). During it, a PreToolUse
+  guard (exit 2, fails closed) allows only project-local Read/Glob, single-file
+  Grep and hippocampus read tools; `remember()` is quarantined in `a2a.db` (never
+  synced) until approved; other memory/wiki writes are refused; `send_message`
+  may only answer the triggering peer. Hub limits: `a2a_max_hops` (3),
+  `a2a_max_thread_msgs` (20), `a2a_rate_per_min` (30), 16 KiB messages,
+  `msg_id` dedupe. Content is fenced as untrusted and tag-escaped.
+- CLI: `hippo a2a pause|resume|audit|policy set/list|quarantine
+  list/approve/reject|alias`; per-peer policy `answer` (default) / `act` /
+  `block` (`a2a_peer_policy`). `hippo register claude-code --plugin|--no-plugin`
+  switches the MCP server between the user-scope entry and the plugin.
+  `hippo install-hooks` adds the A2A guard (PreToolUse + Stop) for Claude Code.
+- pi extension: receives pushes, blocks tools during peer turns, ends the turn
+  at `agent_end`. Re-run `hippo register` to update it.
+- Docs: README section, `docs/ARCHITECTURE.md`, `docs/RUNBOOK.md`,
+  `scripts/pi-extension/README.md`, `plans/v12/prd-a2a.md`.
+- Known: `hippo doctor` shows `mcp:x` for Claude Code in plugin mode (false
+  positive); `hippo config set` echoes all settings including `sync_token`.
+  Not verified live: idle-session wake on push, exit-2 deny under
+  `bypassPermissions`, pi end to end.
+
+### Fixed — A2A: `claude` wrapper is a shell function, not an alias
+
+- `hippo a2a alias --install` wrote an alias that put `--channels` before the
+  user's arguments; `--channels` is variadic, so `claude plugin install ...`
+  failed with `--channels entries must be tagged`. It now installs a `claude`
+  shell function that appends `--channels plugin:hippocampus@hippocampus` as the
+  last argument and passes subcommands (`plugin`, `mcp`, `-p`, `--version`, ...)
+  through. Existing installs: `git pull && hippo a2a alias --install && source ~/.zshrc`.
+
 ### Fixed — Claude Code session identity
 
 - Claude Code sessions key on Claude's `session_id` (`cc-<id>`), not TTY + cwd.

@@ -318,3 +318,120 @@ everyone else pulls.
 
 Sessions, ledgers, handoffs, transcripts, wiki tables, backups, and the
 embedding model cache. These are device-local by design.
+
+
+## Agent-to-agent messaging (A2A)
+
+Off by default. Concepts and setup are in the README ("Agent-to-agent messaging
+(A2A)"); design in `docs/ARCHITECTURE.md`. Hub state is `a2a.db` next to the
+oplog (`~/.hippocampus/a2a.db`, override `HIPPOCAMPUS_A2A_DB`); every device
+also has its own `~/.hippocampus/a2a.db` (local inbox, peer turns, quarantine).
+
+### Enable
+
+1. Hub: `git pull`, `hippo config set a2a_enabled true >/dev/null`, then
+   **restart `hippo sync serve`**. The `/v1/a2a/*` routes mount only at startup.
+2. Check: `curl -H "Authorization: Bearer $(hippo sync token --show)" http://<host>:7879/v1/a2a/agents`
+   returns `{"agents": [...]}`; a 404 means the flag is off or the server was not restarted.
+3. Each device: `hippo config set a2a_enabled true >/dev/null`, install the
+   plugin / hooks / alias per the README. `hippo doctor | grep hooks/claude-code`
+   must show `PreToolUse:ok Stop:ok`.
+
+`hippo config set` prints every setting including `sync_token`: always redirect
+it to `/dev/null`.
+
+### Disable
+
+- Hub: `hippo config set a2a_enabled false >/dev/null`, restart `hippo sync serve`
+  (routes disappear). Devices: same setting; MCP processes and the guard stop
+  polling/denying once they re-read config (new session).
+- Emergency stop without a restart: `hippo a2a pause` (hub rejects sends with
+  423 and delivers nothing). `hippo a2a resume` undoes it.
+
+### Restart the hub
+
+```bash
+# systemd (Linux)           systemctl --user restart hippocampus-sync
+# launchd (macOS)           launchctl kickstart -k gui/$(id -u)/com.hippocampus.sync-server
+# manual                    stop it, then: hippo sync serve --host <ip> --port 7879
+```
+
+Undelivered messages survive a restart (they are rows in `a2a.db`).
+
+### Pause / resume
+
+```bash
+hippo a2a pause      # {"paused": true}
+hippo a2a resume     # {"paused": false}
+```
+
+### Inspect the audit log
+
+```bash
+hippo a2a audit --limit 100        # hub: send, deliver, ack, reject (with reason), pause, resume
+hippo a2a audit --local            # this device: quarantine events
+```
+
+`reject` rows carry the status and reason (`429 rate limit`, `409 max hops
+exceeded`, `409 thread message cap reached`, `413`, `423 a2a paused`).
+
+### Review the memory quarantine
+
+`remember()` calls made while a session was answering a peer wait here.
+
+```bash
+hippo a2a quarantine list
+hippo a2a quarantine approve <id>   # stores it through remember (it syncs from now on)
+hippo a2a quarantine reject <id>
+```
+
+Read the content and the sender before approving: it was written by an agent
+that had untrusted text in context.
+
+### Change a peer's policy
+
+```bash
+hippo a2a policy list
+hippo a2a policy set claude-code@laptop act        # any session on that device; trusted, no tool lockdown
+hippo a2a policy set pi@desktop/<session> block    # one session; never delivered or shown
+hippo a2a policy set claude-code@laptop answer     # back to the default
+```
+
+Policy is stored per device in config (`a2a_peer_policy`), so set it on the
+device that receives the messages.
+
+### Recover from a guard fail-closed
+
+Symptom: every tool call in Claude Code is denied with `A2A guard failed` or
+`A2A peer-turn restriction: guard error`. The guard denies when it cannot decide
+while a2a is on.
+
+1. Read the denial reason; `echo '{}' | hippo a2a hook pretooluse` reproduces it.
+2. Fast unblock: `hippo uninstall-hooks` (then `hippo install-hooks` once fixed), or
+   `hippo config set a2a_enabled false >/dev/null`, or delete the device's
+   `~/.hippocampus/a2a.db` (drops undelivered local copies and any quarantine).
+3. A stale peer turn clears itself after `a2a_peer_turn_ttl_s` (900 s) or at the
+   next Stop.
+
+### Update the shell function on all devices
+
+When the function changes (for example a new `claude` subcommand to pass
+through), on every device:
+
+```bash
+git pull && hippo a2a alias --install && source ~/.zshrc   # or open a new shell
+```
+
+`--install` replaces the marked block (`# >>> hippocampus a2a >>>`), so it is
+idempotent. `hippo a2a alias --uninstall` removes it.
+
+### Rotate the sync token
+
+The A2A hub uses the sync bearer token.
+
+1. On the hub: `hippo sync token` (generates and stores a new token; `--show` prints the current one), restart `hippo sync serve` (it reads the token at startup).
+2. On every device: `hippo config set sync_token <new> >/dev/null`.
+3. Check `hippo sync status` and `hippo a2a audit --limit 5` on each device.
+
+Devices with the old token get 401 until updated, and their A2A pollers log
+`a2a poll failed` and retry every 5 s.

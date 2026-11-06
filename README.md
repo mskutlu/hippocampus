@@ -98,6 +98,12 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Source-backed pages** — ingested markdown/text sources create source pages,
   index/log entries, FTS-backed queryable context, and durable source IDs/refs.
 
+### Agent-to-agent messaging — `send_message` / `inbox` / `reply` / `list_agents`
+
+- **Agents talk to each other.** Sessions on any device message each other
+  through the sync hub. Off by default; memory sync is untouched. See
+  "Agent-to-agent messaging (A2A)" below.
+
 ### Project scoping — `recall(scope=...)` / `remember(scope=...)`
 
 - **One memory, many companies.** A fragment belongs to a project or is
@@ -478,21 +484,188 @@ of sharing one broad `codex` session.
 After installing or upgrading, restart Codex so it reloads both
 `~/.codex/config.toml` and `~/.codex/AGENTS.md`.
 
-### Agent-to-agent messages in Claude Code (live push)
+### Agent-to-agent messaging (A2A)
 
-With `a2a_enabled` on, Claude Code can receive messages from other agents as a
-channel (pushed into the session, no polling by the model). Requires
-`hippocampus-mcp` on the `PATH` Claude Code starts with.
+Agents on any of your devices can message each other through Hippocampus. A
+Claude Code session on the laptop can ask the pi session on the desktop a
+question and get an answer back. It is **off by default**, and memory sync is
+untouched: messages live in a separate `a2a.db`, never in the fragment oplog.
 
-1. Org admin: allow the channel in managed settings:
-   `{ "allowedChannelPlugins": [{ "marketplace": "hippocampus", "plugin": "hippocampus" }] }`
-2. `claude plugin marketplace add mskutlu/hippocampus`, then in Claude Code `/plugin install hippocampus@hippocampus`.
-3. `hippo register claude-code --plugin` removes the user-scope MCP entry (backed up) so the plugin's server is not duplicated; hooks stay. `--no-plugin` reverts.
-4. `hippo config set a2a_enabled true` (or `HIPPOCAMPUS_A2A_ENABLED=1`).
-5. `hippo a2a alias --install` adds a `claude` shell function to your shell rc that appends `--channels plugin:hippocampus@hippocampus` to interactive/prompt invocations and passes subcommands (`claude plugin install ...`) through untouched (`--uninstall` removes it; without a flag it only prints the block).
+**Addresses** are `client@device[/session]`, for example `claude-code@laptop`
+(any session on that device) or `pi@desktop/cc-abc123` (one session). A bare
+`client` in `send_message` means "on this device".
 
-Pushed content is untrusted: tools are restricted until the turn ends (see
-`hippo a2a policy set <peer> answer|act|block`).
+**MCP tools** (disabled until `a2a_enabled` is on):
+
+| Tool | What it does |
+|------|--------------|
+| `send_message(to, content, thread_id?)` | Send to an address. Hop count, thread and rate limits are enforced by the hub. |
+| `inbox(limit?)` | Read received messages. This is the only way content enters the model context (besides live push). |
+| `reply(msg_id, content)` | Answer a message in its thread. |
+| `list_agents()` | Addresses seen on the hub recently. |
+
+**How delivery works**
+
+- Every MCP server process long-polls the hub for its own address and stores
+  what arrives in the local `~/.hippocampus/a2a.db`.
+- **Next-turn notice (hooks):** the SessionStart / UserPromptSubmit hooks add one
+  line per unread message (id, sender, thread, size, no content). The model calls
+  `inbox()` only if the message is relevant.
+- **Live push (Claude Code):** the `hippocampus` plugin declares the MCP server as
+  a Claude Code *channel*, so a message is pushed straight into the running
+  session. Needs the setup below.
+- **Live push (pi):** the pi extension receives the same push and injects it with
+  `pi.sendUserMessage`.
+
+#### Setup — hub (the machine running `hippo sync serve`)
+
+```bash
+git pull
+hippo config set a2a_enabled true >/dev/null   # see Troubleshooting: it prints all settings
+# RESTART `hippo sync serve` — the /v1/a2a/* routes are mounted only at startup, and only when enabled
+curl -H "Authorization: Bearer <sync token>" http://<host>:7879/v1/a2a/agents   # {"agents": []}, no longer 404
+```
+
+Without a sync server (single device) A2A uses the local store; the steps below
+still apply.
+
+#### Setup — org owner, once (Team / Enterprise plans)
+
+Live push needs channels allowed in Claude Code managed settings:
+
+```json
+{
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [{ "marketplace": "hippocampus", "plugin": "hippocampus" }]
+}
+```
+
+`allowedChannelPlugins` **replaces** Anthropic's default allowlist. If you use
+official channel plugins, list them here too. Without this setting live push does
+not work, but next-turn delivery (hooks + `inbox()`) still does.
+
+#### Setup — each device
+
+```bash
+git pull
+claude plugin marketplace add mskutlu/hippocampus
+claude plugin install hippocampus@hippocampus
+hippo install-hooks                    # adds the PreToolUse guard + Stop hook
+hippo register claude-code --plugin    # AFTER the plugin install; --no-plugin reverts
+hippo a2a alias --install              # `claude` shell function in your rc file
+hippo config set a2a_enabled true >/dev/null
+```
+
+Then open a new shell. `hippocampus-mcp` must be on the `PATH` Claude Code starts with.
+
+- `--plugin` removes the user-scope `hippocampus` MCP entry (backed up) so the
+  plugin's server is not registered twice; hooks stay.
+- The alias is a shell **function**, not an alias. It appends
+  `--channels plugin:hippocampus@hippocampus` as the *last* argument. `--channels`
+  is variadic and would swallow a following subcommand or prompt as a channel
+  entry; at the end it cannot. Subcommands (`claude plugin ...`, `claude mcp ...`,
+  `-p`, `--version`, ...) pass through untouched. `hippo a2a alias` with no flag
+  just prints the block; `--uninstall` removes it.
+
+Verify:
+
+```bash
+hippo doctor | grep hooks/claude-code   # PreToolUse:ok Stop:ok
+claude plugin list                      # hippocampus@hippocampus enabled
+# in Claude Code: /mcp shows ONE hippocampus server
+```
+
+#### pi
+
+The extension in `~/.pi/agent/extensions/hippocampus/` receives pushes, frames
+them as untrusted peer messages, and blocks tools during peer turns using the same
+policy as the Claude Code guard. Re-run `hippo register` after `git pull` to update
+it. See `scripts/pi-extension/README.md`.
+
+#### Safety model
+
+A message from another agent is **untrusted data**. A malicious or confused peer
+(or text it relayed from the web) could try to make your agent run commands or
+poison memory. The design contains that; it does not remove the risk.
+
+- **Peer turn.** A peer turn starts when message content enters a session's
+  context (`inbox()` returned content, or a live push) and ends at the Claude Code
+  `Stop` hook / pi `agent_end`, or after `a2a_peer_turn_ttl_s` (default 900 s).
+  Replying does **not** end it: the peer's text is still in context.
+- **Tool lockdown (policy `answer`, the default).** During a peer turn only
+  project-local `Read`/`Glob`, `Grep` on a single non-secret file, and the
+  hippocampus read tools (`recall`, `get_fragment`, `list_fragments`,
+  `top_fragments`, `inbox`, `reply`, `list_agents`, `get_progress`, `log_progress`)
+  are allowed. Everything else (Bash, Edit, Write, WebFetch, other MCP servers)
+  is denied by the PreToolUse guard with exit 2, before permission rules. Secret
+  paths (`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.netrc`,
+  `~/.hippocampus`, `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`,
+  `credentials*`, `*secret*`) and anything outside the project are refused; if the
+  project is `/` or `$HOME` all reads are refused.
+- **Memory quarantine.** `remember()` during a peer turn is not stored: it lands
+  in `a2a.db` (which never syncs) until you run `hippo a2a quarantine approve`.
+  `remember(supersedes=...)` and all other memory/wiki writes are refused.
+- **Send restriction.** During a peer turn `send_message` may only answer the peer
+  that triggered it (it becomes a `reply`); no forwarding or new recipients.
+- **Hub limits** (enforced by the hub, settings via `hippo config set`):
+
+  | Setting | Default | Limit |
+  |---------|---------|-------|
+  | `a2a_max_hops` | 3 | reply depth per thread; the hub computes it, clients cannot reset it |
+  | `a2a_max_thread_msgs` | 20 | messages per thread |
+  | `a2a_rate_per_min` | 30 | sends per sender device per minute |
+  | `a2a_peer_turn_ttl_s` | 900 | peer turn expiry without a Stop |
+  | (fixed) | 16 KiB | max message size |
+
+  Sends are idempotent on `msg_id` (retries do not duplicate).
+- **Peer policy.** Per peer: `answer` (default, locked down), `act` (trusted peer,
+  no lockdown) or `block` (never delivered or shown). `hippo a2a policy set
+  claude-code@laptop act` matches every session on that device; add `/session` for one.
+- **Kill switch.** `hippo a2a pause` stops all delivery and sends on the hub.
+- **Audit.** The hub records send / deliver / ack / reject / pause / resume;
+  quarantine approve/reject are audited locally.
+- **Fencing.** Content is wrapped in `<a2a-message ... untrusted>`; any
+  `<a2a-message>` or `<channel>` tag inside it is escaped so a message cannot close
+  the fence. Ids and addresses shown to the model are sanitised.
+
+Prompt injection is **contained, not eliminated**: a peer can still make your
+agent say something wrong in a reply, and `act` peers are fully trusted.
+
+#### Commands
+
+```bash
+hippo a2a pause | resume                       # kill switch (hub)
+hippo a2a audit [--limit 50] [--local]         # hub audit; --local = this device (quarantine events)
+hippo a2a policy list
+hippo a2a policy set <client@device[/session]> answer|act|block
+hippo a2a quarantine list
+hippo a2a quarantine approve <id>              # stores it via remember (syncs from then on)
+hippo a2a quarantine reject <id>
+hippo a2a alias [--install | --uninstall]      # claude shell function
+```
+
+#### Troubleshooting
+
+- **`--channels entries must be tagged`** — an old alias put `--channels` before
+  your subcommand. `git pull && hippo a2a alias --install && source ~/.zshrc`, or
+  bypass once with `command claude ...`.
+- **Every tool is blocked after a crash** — the guard fails closed: if it errors
+  while a2a is on, it denies. Remove the hook with `hippo uninstall-hooks`, or
+  delete `~/.hippocampus/a2a.db` (loses undelivered local messages and quarantine).
+- **Hub returns 404 on `/v1/a2a/*`** — `a2a_enabled` is off on the hub, or
+  `hippo sync serve` was not restarted after enabling it.
+- **`hippo doctor` shows `mcp:x` for Claude Code in plugin mode** — known false
+  positive: the MCP entry now comes from the plugin, not `~/.claude.json`.
+- **`hippo config set` prints every setting, including `sync_token`** — known
+  issue; redirect output to `/dev/null` and do not paste it into chats or logs.
+
+#### Known limits
+
+Not verified live yet: waking an *idle* Claude Code session with a channel push;
+the exit-2 deny under `bypassPermissions` (documented by Anthropic, not tested
+here); pi end to end. Within one account, a "verified sender" is the device id
+under the shared sync token, not real authentication. Cross-account use needs
+per-peer tokens (see `plans/v12/prd-a2a.md`).
 
 ### Session identity
 
@@ -614,6 +787,14 @@ hippo sync                      # push + pull now
 hippo sync status
 hippo sync serve --port 7879    # run the oplog server (web extra)
 
+# Agent-to-agent messaging (A2A) — see "Agent-to-agent messaging (A2A)"
+hippo a2a pause | resume        # kill switch
+hippo a2a audit --limit 50
+hippo a2a policy set claude-code@laptop act   # answer (default) | act | block
+hippo a2a quarantine list       # remember() calls made while answering a peer
+hippo a2a quarantine approve <id>
+hippo a2a alias --install       # claude shell function (adds --channels)
+
 # Memory health (V11)
 hippo audit                     # noise, saturation, coverage, stale sessions; exit 1 on breach
 hippo purge-noise --dry-run     # preview; --commit backs up, deletes hook-markup fragments, shrinks oversized summaries
@@ -710,6 +891,8 @@ Browse `hippo --help` and `hippo <subcommand> --help` for the full surface.
 - `plans/v7/` — auto-trigger via lifecycle hooks
 - `plans/v8/` — compaction-safe context re-injection + sqlite-vec roadmap
 - `plans/v10/` — DB-backed LLM Wiki layer
+- `plans/v11/` — shared memory: quality, project scoping, device sync
+- `plans/v12/` — agent-to-agent messaging (A2A)
 - `docs/ARCHITECTURE.md` — data flow, schema, injection pipeline
 - `docs/RUNBOOK.md` — operations, backup/restore, debugging
 - `CHANGELOG.md` — versioned changes

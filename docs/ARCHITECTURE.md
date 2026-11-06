@@ -213,6 +213,81 @@ rules-file path is still useful (it works when hooks aren't installed,
 and the top-N block lives there permanently for direct user reference)
 but should not be relied on alone for short-term memory.
 
+## Agent-to-agent messaging (A2A)
+
+Off unless `a2a_enabled` (or `HIPPOCAMPUS_A2A_ENABLED=1`). Package:
+`src/hippocampus/a2a/`.
+
+### Components
+
+| Component | Where | Role |
+|---|---|---|
+| `a2a.db` | `~/.hippocampus/a2a.db` (`HIPPOCAMPUS_A2A_DB`; on the hub it is the same file as the hub store, next to `sync.db`) | SQLite, WAL. Hub tables: `a2a_messages` (seq, msg_id, thread_id, in_reply_to, sender, recipient, content, hop, delivered_at), `a2a_audit`, `a2a_presence`, `a2a_state` (pause flag). Device tables: `a2a_inbox` (received copies, `shown_at`), `a2a_peer_turn` (one row per session with peer content in context), `quarantined_fragments`. |
+| Hub routes | `a2a/hub.py`, mounted by `sync/server.py` only when enabled, at startup | `POST /v1/a2a/send`, `GET /v1/a2a/inbox` (long-poll, max 25 s), `POST /v1/a2a/ack`, `GET /v1/a2a/agents`, `POST /v1/a2a/pause`, `POST /v1/a2a/resume`, `GET /v1/a2a/audit`. Same bearer token as sync. One `dispatch()` serves both FastAPI and the local transport. |
+| Mailbox client | `a2a/client.py` | HTTP to the hub when `sync_url` + `sync_token` are set, else the local store. |
+| Poller thread | `a2a/tools.py`, inside each MCP server process | Long-polls for this session's address, writes to `a2a_inbox` before acking (crash redelivers; `INSERT OR IGNORE` dedupes), then runs `ON_MESSAGE` callbacks. |
+| MCP tools | `a2a/tools.py` | `send_message`, `inbox`, `reply`, `list_agents`, plus `peer_gate()` applied to every other tool call. |
+| Hook notice | `clients/hook_context.py` `_a2a_section` | Reads only the local `a2a_inbox`; one metadata line per unread message, no content, no network. |
+| Channel Pusher | `a2a/channel.py` | When `HIPPOCAMPUS_CHANNEL=1` (set by the plugin's MCP entry), declares the `claude/channel` capability and writes `notifications/claude/channel` to the stdio stream. |
+| Guard hook | `a2a/guard.py` via `scripts/hooks/a2a-guard.sh.template` | Claude Code PreToolUse (deny with exit 2) and Stop (end the peer turn). Stdlib only, read-only on `a2a.db`, fails closed. |
+| pi bridge | `a2a/pi.py` + `scripts/pi-extension/{index,a2a-frame}.ts` | Hidden MCP methods `a2a_check_tool` / `a2a_end_turn`; the extension pushes via `pi.sendUserMessage` and blocks tools in `tool_call`. |
+| Policy / state | `a2a/policy.py`, `a2a/state.py` | `answer` / `act` / `block` per peer; peer-turn lifecycle (`begin` / `end` / `active`, TTL via `a2a_peer_turn_ttl_s`). |
+| Plugin | `.claude-plugin/marketplace.json`, `plugins/claude-code/.claude-plugin/plugin.json` | Ships the MCP server as a channel (`"channels": [{"server": "hippocampus"}]`). |
+
+### Data flow
+
+```
+ sender session                      hub (hippo sync serve)                  receiver device
+ ──────────────                      ──────────────────────                  ───────────────
+ send_message ──HTTP POST /send──▶  validate · rate · hops · size
+ (MCP tool)                          INSERT a2a_messages + audit
+                                           │
+                                           │  long-poll GET /inbox (≤25 s)
+                                           ▼
+                               ┌── poller thread (receiver's MCP process)
+                               │     store_received → a2a_inbox ; POST /ack
+                               │
+            ┌──────────────────┴───────────────────┐
+            ▼                                      ▼
+   ON_MESSAGE → Pusher (channel mode)       hook notice (next turn)
+   state.begin_peer_turn BEFORE push        metadata only, no content
+   notifications/claude/channel                     │
+            │                                       ▼
+            ▼                                model calls inbox()
+   content in session context  ◀────────────  state.begin_peer_turn
+            │
+            ▼
+   peer turn active (a2a_peer_turn row)
+     ├─ PreToolUse guard reads it (exit 2 deny)      ┐ Claude Code
+     ├─ MCP peer_gate: remember→quarantine, writes ✗ ├ and every MCP client
+     └─ Stop hook / agent_end / TTL ends it          ┘ (pi: a2a_check_tool / a2a_end_turn)
+```
+
+### Why a separate store
+
+Sync replicates through `collect_ops`, which reads only fragments, tombstones,
+associations and projects. Messages are ephemeral, per-recipient, and carry
+untrusted content; putting them in `hippocampus.db` would sync them to every
+device and into long-term memory. `a2a.db` is a separate file nothing syncs, so
+quarantined `remember()` calls also never leave the device until approved (the
+approval runs the normal `remember` path, which then syncs).
+
+### Identity and session keys
+
+- Device id comes from sync (`sync_client.device_id()`); client name from
+  `HIPPOCAMPUS_CLIENT`. Address: `client@device/session_key`.
+- For Claude Code the session key is `cc-<session_id>`
+  (`sessions.claude_session_key`). The MCP process derives it from its parent
+  pid pointer (bound by the SessionStart / UserPromptSubmit hooks) or
+  `CLAUDE_CODE_SESSION_ID`; the guard hook derives the same string from the hook
+  payload's `session_id` (`guard.session_key`, a stdlib mirror pinned by
+  `tests/unit/test_a2a_guard.py`). `inbox()` refuses to show content if the
+  Claude Code key is not `cc-...`, because the guard could not see that peer turn.
+- Messages to `client@device` reach every session on that device whose address
+  matches the base; the first ack wins and marks the message delivered.
+- Within one account the sender is only as verified as the device id under the
+  shared sync token. The hub does not authenticate individual senders.
+
 ## Extensibility
 
 Adding a new AI client (Cursor, Continue, Zed, …) is three steps:

@@ -15,6 +15,7 @@ and operational truth lives in the code, `README.md`, `CHANGELOG.md`, and
 | v9 | Passive autonomy | Implemented |
 | v10 | LLM wiki | Implemented; hardening continues |
 | v11 | Memory quality, project scoping, device sync | Phases 1-3 implemented; phase 4 (rollout to all devices) in progress |
+| v12 | Agent-to-agent messaging (A2A) | Phase 1 implemented; phases 2-4 proposed |
 
 New proposals should state their release target, owner, acceptance checks, and
 whether they replace an older plan.
