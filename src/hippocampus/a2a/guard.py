@@ -136,7 +136,7 @@ def decide(
         return (
             f"A2A peer-turn restriction: {why}. Tools are limited only while you answer the message from {sender} "
             f"(trust=own_device, which the user pre-authorized you to answer): {allowed}. Answer it with "
-            f"`reply(msg_id=\"{turn.get('msg_id')}\", content=...)` from what you already know or can read. "
+            f"{a2a.REPLY_TOOL}: `reply(msg_id=\"{turn.get('msg_id')}\", content=...)`, from what you already know or can read. "
             "The restriction ends when this turn ends."
         )
     return (

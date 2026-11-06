@@ -41,6 +41,7 @@ def test_send_inbox_reply_local(a2a_on):
     out = tools.inbox()
     assert out["messages"][0]["content"] == "hello" and out["messages"][0]["unread"]
     assert out["messages"][0]["trust"] == "unknown"  # codex@peer is not a device the hub knows
+    assert out["messages"][0]["policy"] in ("answer", "act")
     mid = out["messages"][0]["id"]
     assert state.active_peer_turn("sess1")["sender"] == "codex@peer"  # content returned -> peer turn
     r = tools.reply(msg_id=mid, content="answer")

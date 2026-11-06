@@ -155,3 +155,17 @@ def test_pause_resume_audit_cli(hippo_env, monkeypatch):
     assert json.loads(runner.invoke(cli, ["a2a", "resume"]).output) == {"paused": False}
     events = [a["event"] for a in json.loads(runner.invoke(cli, ["a2a", "audit"]).output)]
     assert events[:2] == ["resume", "pause"]
+
+
+def test_refuse_wording_by_trust(hippo_env, monkeypatch):
+    monkeypatch.setenv("HIPPOCAMPUS_A2A_ENABLED", "1")
+    from hippocampus.a2a import tools
+
+    t = {"sender": "codex@peer", "msg_id": "m9", "trust": "own_device"}
+    own = tools._refuse("remember", t, "is blocked")["error"]
+    assert 'reply(msg_id="m9"' in own and "not SendMessage" in own and "turn ends" in own
+    assert "untrusted" not in own and "user can" not in own
+    other = tools._refuse("remember", {**t, "trust": "unknown"}, "is blocked")["error"]
+    assert "untrusted" in other and "message is waiting" in other and "reply(" not in other
+    monkeypatch.setenv("HIPPO_A2A_AUTO_ANSWER", "false")
+    assert "untrusted" in tools._refuse("remember", t, "is blocked")["error"]

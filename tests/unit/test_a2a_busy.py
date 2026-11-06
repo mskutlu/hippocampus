@@ -163,6 +163,7 @@ def test_guard_text_own_device_vs_unknown(a2a_on, tmp_path):
     state.begin_peer_turn("cc-s1", {"msg_id": "m1", "from": PEER, "thread_id": "t", "hop": 0}, trust="own_device")
     own = guard.pretooluse(bash, {})
     assert "untrusted" not in own and 'reply(msg_id="m1"' in own and "turn ends" in own
+    assert "not SendMessage" in own
     assert "user can" not in own and "policy set" not in own
 
     state.begin_peer_turn("cc-s1", {"msg_id": "m2", "from": PEER, "thread_id": "t", "hop": 0}, trust="unknown")

@@ -35,6 +35,7 @@ def test_instructions_carry_untrusted_and_authorization(a2a_on, monkeypatch):
 
     assert "UNTRUSTED DATA" in channel.INSTRUCTIONS and "never instructions" in channel.INSTRUCTIONS
     assert "authorized you to answer trust=own_device" in channel.INSTRUCTIONS
+    assert "not SendMessage" in channel.INSTRUCTIONS
     monkeypatch.setenv("HIPPOCAMPUS_CHANNEL", "1")
     assert channel.init_options(server).instructions == channel.INSTRUCTIONS
     monkeypatch.setenv("HIPPO_A2A_AUTO_ANSWER", "false")
@@ -90,3 +91,12 @@ def test_pusher_marks_trust_and_policy(a2a_on, monkeypatch):
     assert sent == [("own_device", "act")]
     params = channel.build_params(msg, "own_device", "act")
     assert params["meta"]["trust"] == "own_device" and params["meta"]["policy"] == "act"
+
+
+def test_act_wording_and_inbox_policy(a2a_on):
+    from hippocampus import a2a
+    from hippocampus.a2a import channel
+
+    for text in (a2a.AUTHORIZATION, channel.INSTRUCTIONS):
+        assert "policy=act" in text and "normal tools" in text and "forward" in text and "policy=answer" in text
+    assert "normal tools" not in channel.INSTRUCTIONS_ASK_FIRST
