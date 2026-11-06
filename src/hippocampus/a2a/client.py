@@ -59,8 +59,9 @@ class Mailbox:
             "in_reply_to": in_reply_to, "msg_id": str(ULID()),
         })
 
-    def inbox(self, address: str, since: int = 0, wait: int = 0) -> dict:
-        return self._call("GET", "/v1/a2a/inbox?" + urlencode({"address": address, "since": since, "wait": wait}))
+    def inbox(self, address: str, since: int = 0, wait: int = 0, responder: bool = False) -> dict:
+        q = {"address": address, "since": since, "wait": wait, **({"responder": 1} if responder else {})}  # old hubs ignore it
+        return self._call("GET", "/v1/a2a/inbox?" + urlencode(q))
 
     def ack(self, address: str, msg_ids: list[str]) -> dict:
         return self._call("POST", "/v1/a2a/ack", {"address": address, "msg_ids": msg_ids})

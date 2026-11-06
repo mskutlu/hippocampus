@@ -154,10 +154,15 @@ def pretooluse(payload: Mapping[str, Any], env: Mapping[str, str] = os.environ) 
     """Deny reason, or None. The caller exits 2 with it on stderr (blocks even under bypassPermissions)."""
     if not a2a.enabled():
         return None
-    turns = live_turns(db_path())
+    db, sid = db_path(), _session_id(payload, env)
+    if sid:
+        try:
+            a2a.touch_activity(db, session_key(sid))  # keeps state.busy() true while this turn makes tool calls
+        except OSError:
+            pass  # best effort: never block or delay a tool call over the heartbeat
+    turns = live_turns(db)
     if not turns:
         return None
-    sid = _session_id(payload, env)
     if not sid:  # fail closed: some Claude Code session on this device is in a peer turn and we can't tell which
         return "A2A peer-turn restriction: cannot resolve this session's id while a peer turn is active on this device."
     turn = turns.get(session_key(sid))

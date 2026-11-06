@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 from hippocampus import config
 
@@ -50,12 +52,49 @@ def escape_tag(text: str) -> str:
     return _TAG_RE.sub(r"&lt;\1", text)
 
 
+def responder() -> bool:
+    """This MCP process belongs to the device's A2A responder session (`hippo a2a responder`)."""
+    return os.environ.get("HIPPOCAMPUS_A2A_RESPONDER") == "1"
+
+
+def _age_s(ts: str) -> float | None:
+    try:
+        started = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return (datetime.now(timezone.utc) - started).total_seconds()
+
+
+def _setting_s(key: str, default: int) -> int:
+    raw = config.get_setting(key)
+    return default if raw in (None, "") else int(raw)
+
+
 def turn_fresh(started_at: str) -> bool:
     """True while a peer turn started at `started_at` is within `a2a_peer_turn_ttl_s`."""
-    raw = config.get_setting("a2a_peer_turn_ttl_s")
-    ttl = 900 if raw in (None, "") else int(raw)
+    age = _age_s(started_at)
+    return age is None or age < _setting_s("a2a_peer_turn_ttl_s", 900)  # unparseable: keep it active (fail closed)
+
+
+def activity_file(db: Path, session_key: str) -> Path:
+    """Touched by the PreToolUse guard on every tool call: a lock-free "this turn is still running" heartbeat."""
+    return db.parent / "a2a-activity" / session_key
+
+
+def touch_activity(db: Path, session_key: str) -> None:
+    f = activity_file(db, session_key)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.touch()
+
+
+def turn_active(started_at: str, db: Path, session_key: str) -> bool:
+    """Busy rule for push gating only: within the hard TTL AND some activity (turn start or a tool call) within
+    `a2a_busy_idle_s`. An Esc-interrupted turn never runs Stop; this lets it lapse after the idle window."""
+    age = _age_s(started_at)
+    if age is None:
+        return True
     try:
-        started = datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        return True  # unparseable: keep it active (fail closed)
-    return datetime.now(timezone.utc) - started < timedelta(seconds=ttl)
+        age = min(age, time.time() - activity_file(db, session_key).stat().st_mtime)
+    except OSError:
+        pass
+    return turn_fresh(started_at) and age < _setting_s("a2a_busy_idle_s", 180)

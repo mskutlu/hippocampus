@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — A2A: Esc-safe queueing and a per-device responder session
+
+- Busy gating for live push now also lapses after `a2a_busy_idle_s` (default
+  180 s) without a tool call, so an Esc-interrupted turn (no Stop hook) no longer
+  stalls the queue for 15 minutes. The PreToolUse guard touches a per-session
+  heartbeat file (`a2a-activity/<session_key>` next to `a2a.db`). Peer-turn tool
+  lockdown is unchanged (Stop or `a2a_peer_turn_ttl_s`).
+- `hippo a2a responder` starts `claude --channels plugin:hippocampus@hippocampus`
+  with `HIPPOCAMPUS_A2A_RESPONDER=1`. While a responder is present on a device,
+  device-level messages go only to responder sessions. The inbox request sends
+  `responder=1`; the hub records it with presence (additive `a2a_presence.responder`
+  column) and `list_agents()` reports it.
+
 ### Added — A2A: own-device agents answer without a human
 
 - `a2a_auto_answer` (default `true`): with A2A on, `hippo inject` adds a short

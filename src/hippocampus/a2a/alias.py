@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 BEGIN, END = "# >>> hippocampus a2a >>>", "# <<< hippocampus a2a <<<"
+CHANNELS = ["--channels", "plugin:hippocampus@hippocampus"]
 # --channels is variadic: it goes LAST so it can't swallow a subcommand or prompt; subcommands skip it.
 # shortcut: subcommand list is from Claude Code 2.1.319 `--help`, refresh when new ones ship.
 FUNCTION = """unalias claude 2>/dev/null
@@ -14,7 +15,7 @@ claude() {
     agents|attach|auth|auto-mode|doctor|gateway|import|install|logs|mcp|plugin|plugins|purge|respawn|rm|setup-token|stop|kill|ultrareview|update|upgrade|-p|--print|-v|--version|-h|--help)
       command claude "$@" ;;
     *)
-      command claude "$@" --channels plugin:hippocampus@hippocampus ;;
+      command claude "$@" """ + " ".join(CHANNELS) + """ ;;
   esac
 }"""
 BLOCK = f"{BEGIN}\n{FUNCTION}\n{END}\n"

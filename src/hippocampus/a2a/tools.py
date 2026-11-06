@@ -83,14 +83,17 @@ def _poll_once(box: a2a_client.Mailbox, addr: str, cursor: int, wait: int, busy_
     unacked and the cursor unmoved, so they are fetched again (or by an idle session after the lease) when it is idle."""
     if busy_key and state.busy(busy_key):
         return cursor  # not polling: no claim on device-level messages
-    res = box.inbox(addr, cursor, wait)
+    res = box.inbox(addr, cursor, wait, responder=a2a.responder())
     msgs = res.get("messages") or []
     if msgs and busy_key and state.busy(busy_key):  # a turn began during the long-poll; our claim lapses in LEASE_SECONDS
         return cursor
     if msgs:
+        with store.connect(store.db_path()) as conn:  # a refetched row (ack failed) must not re-fire callbacks
+            seen = {r[0] for r in conn.execute(
+                f"SELECT msg_id FROM a2a_inbox WHERE msg_id IN ({','.join('?' * len(msgs))})", [m["msg_id"] for m in msgs])}
         store.store_received(store.db_path(), addr, msgs)  # persist before ack: a crash redelivers, INSERT OR IGNORE dedupes
         box.ack(addr, [m["msg_id"] for m in msgs])
-        for m in msgs:
+        for m in (m for m in msgs if m["msg_id"] not in seen):
             for cb in list(ON_MESSAGE):
                 try:
                     cb(m)
@@ -100,11 +103,12 @@ def _poll_once(box: a2a_client.Mailbox, addr: str, cursor: int, wait: int, busy_
 
 
 def _poll_loop(addr: str, busy_key: str | None = None) -> None:
-    box, cursor = a2a_client.Mailbox(), 0
+    box = a2a_client.Mailbox()
     while True:
         started = time.monotonic()
         try:
-            cursor = _poll_once(box, addr, cursor, 20, busy_key)
+            # always since=0: the hub filters delivered rows, and a skipped device-level row sits below any cursor
+            _poll_once(box, addr, 0, 20, busy_key)
             if time.monotonic() - started < 1:  # busy session, paused hub etc.: recheck in 2 s, don't spin
                 time.sleep(2)
         except Exception as exc:

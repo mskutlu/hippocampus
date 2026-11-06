@@ -111,7 +111,7 @@ def _now() -> str:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Additive columns for a2a.db files created before them."""
-    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at")), ("a2a_peer_turn", ("trust",))):
+    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at")), ("a2a_peer_turn", ("trust",)), ("a2a_presence", ("responder",))):
         have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         for col in cols:
             if col not in have:
@@ -237,10 +237,26 @@ def send(path: Path, *, sender: str, to: str, content: str, msg_id: str,
         raise
 
 
-def _fetch(conn, address: str, since: int) -> list[dict[str, Any]]:
+def _ago(seconds: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _responder_present(conn, base: str) -> bool:
+    """A fresh responder session (`hippo a2a responder`) polls for `base`. PRESENCE_SECONDS, not shorter: a responder
+    mid-turn stops polling, and its device-level messages must not fall to a work session meanwhile."""
+    return conn.execute(
+        "SELECT 1 FROM a2a_presence WHERE responder = '1' AND substr(address, 1, ?) = ? AND last_seen > ? LIMIT 1",
+        (len(base) + 1, base + "/", _ago(PRESENCE_SECONDS)),
+    ).fetchone() is not None
+
+
+def _fetch(conn, address: str, since: int, responder: bool = False) -> list[dict[str, Any]]:
     # A device-level (base) address is leased to one polling session at a time; session-qualified rows are exclusive anyway.
+    # While the device has a responder, only responder sessions may take device-level rows.
     base = base_address(address)
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=LEASE_SECONDS)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    if not responder and _responder_present(conn, base):
+        base = None  # matches no recipient
+    cutoff = _ago(LEASE_SECONDS)
     rows = conn.execute(
         "SELECT * FROM a2a_messages WHERE seq > ? AND delivered_at IS NULL AND ((recipient = ? AND instr(recipient, '/') > 0) OR (recipient = ? AND "
         "(claimed_by IS NULL OR claimed_by = ? OR claimed_at < ?))) ORDER BY seq LIMIT 100",
@@ -253,8 +269,9 @@ def _fetch(conn, address: str, since: int) -> list[dict[str, Any]]:
     return [_msg_dict(r) for r in rows]
 
 
-def inbox(path: Path, address: str, since: int = 0, wait: int = 0) -> dict[str, Any]:
-    """Undelivered messages for `address`; long-polls up to `wait` seconds."""
+def inbox(path: Path, address: str, since: int = 0, wait: int = 0, responder: bool = False) -> dict[str, Any]:
+    """Undelivered messages for `address`; long-polls up to `wait` seconds. `responder`: the caller is its device's
+    A2A responder session (recorded with presence)."""
     if not ADDRESS_RE.match(address or ""):
         raise A2AError(400, f"bad address: {address!r}")
     deadline = time.monotonic() + max(0, min(int(wait), 25))
@@ -263,11 +280,12 @@ def inbox(path: Path, address: str, since: int = 0, wait: int = 0) -> dict[str, 
         with connect(path) as conn:
             if first:
                 conn.execute(
-                    "INSERT INTO a2a_presence(address, last_seen) VALUES (?, ?) ON CONFLICT(address) DO UPDATE SET last_seen = excluded.last_seen",
-                    (address, _now()),
+                    "INSERT INTO a2a_presence(address, last_seen, responder) VALUES (?, ?, ?) "
+                    "ON CONFLICT(address) DO UPDATE SET last_seen = excluded.last_seen, responder = excluded.responder",
+                    (address, _now(), "1" if responder else None),
                 )
                 first = False
-            msgs = [] if _is_paused(conn) else _fetch(conn, address, since)
+            msgs = [] if _is_paused(conn) else _fetch(conn, address, since, responder)
             for m in msgs:
                 _audit(conn, "deliver", msg_id=m["msg_id"], sender=m["from"], recipient=address, thread_id=m["thread_id"], hop=m["hop"])
         if msgs or time.monotonic() >= deadline:
@@ -289,11 +307,12 @@ def ack(path: Path, address: str, msg_ids: list[str]) -> int:
     return n
 
 
-def agents(path: Path) -> list[dict[str, str]]:
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=PRESENCE_SECONDS)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def agents(path: Path) -> list[dict[str, Any]]:
     with connect(path) as conn:
-        rows = conn.execute("SELECT address, last_seen FROM a2a_presence WHERE last_seen > ? ORDER BY address", (cutoff,)).fetchall()
-    return [{"address": r["address"], "last_seen": r["last_seen"]} for r in rows]
+        rows = conn.execute(
+            "SELECT address, last_seen, responder FROM a2a_presence WHERE last_seen > ? ORDER BY address", (_ago(PRESENCE_SECONDS),)
+        ).fetchall()
+    return [{"address": r["address"], "last_seen": r["last_seen"], "responder": r["responder"] == "1"} for r in rows]
 
 
 def audit(path: Path, limit: int = 100) -> list[dict[str, Any]]:

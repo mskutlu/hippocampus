@@ -358,6 +358,21 @@ it to `/dev/null`.
 
 Undelivered messages survive a restart (they are rows in `a2a.db`).
 
+### Queueing and the responder session
+
+- A busy Claude Code session (user turn or peer turn) does not poll; messages
+  wait unacked on the hub, with no expiry. An Esc-interrupted turn (no Stop hook)
+  counts as idle after `a2a_busy_idle_s` (default 180 s) with no tool call; hard
+  limit `a2a_peer_turn_ttl_s` (900 s). Peer-turn tool lockdown is not shortened by
+  the idle rule. A tool call that runs longer than the idle window without
+  another tool call can let a push in; raise `a2a_busy_idle_s` if that bites.
+- Per machine, keep one idle responder: `hippo a2a responder` in a spare
+  terminal / tmux pane (`tmux new -d -s a2a 'hippo a2a responder'`). While it is
+  present (polled within 10 min), device-level messages (`claude-code@<device>`)
+  are claimable only by responder sessions. Check with `list_agents()` or
+  `curl .../v1/a2a/agents` (`"responder": true`). Activity heartbeat files live in
+  `~/.hippocampus/a2a-activity/` and are removed at Stop.
+
 ### Pause / resume
 
 ```bash

@@ -1,7 +1,7 @@
 """Peer turn: a session has peer message CONTENT in its context.
 
 Begun by `inbox()` returning content; ended by the Claude Code Stop hook or by
-`a2a_peer_turn_ttl_s`. Busy: a Claude Code user turn (UserPromptSubmit .. Stop); channel pushes wait. Read by the MCP gate (a2a.tools.peer_gate) and the
+`a2a_peer_turn_ttl_s`. Busy: a Claude Code user turn (UserPromptSubmit .. Stop, or idle `a2a_busy_idle_s`); channel pushes wait. Read by the MCP gate (a2a.tools.peer_gate) and the
 PreToolUse guard (a2a.guard, read-only and stdlib-only).
 """
 
@@ -46,16 +46,21 @@ def mark_busy(session_key: str, path: Path | None = None) -> None:
 
 def end_turn(session_key: str, path: Path | None = None) -> None:
     """Stop: the agent turn (user or peer) is over."""
-    with store.connect(path or store.db_path()) as conn:
+    db = path or store.db_path()
+    with store.connect(db) as conn:
         conn.execute("DELETE FROM a2a_busy WHERE session_key = ?", (session_key,))
         conn.execute("DELETE FROM a2a_peer_turn WHERE session_key = ?", (session_key,))
+    a2a.activity_file(db, session_key).unlink(missing_ok=True)
 
 
 def busy(session_key: str, path: Path | None = None) -> bool:
-    """A user turn or a peer turn is in progress (TTL `a2a_peer_turn_ttl_s` covers a turn whose Stop never ran)."""
-    with store.connect(path or store.db_path()) as conn:
+    """A user turn or a peer turn is in progress and not idle (`a2a.turn_active`: an Esc'd turn whose Stop never ran
+    lapses after `a2a_busy_idle_s` without tool calls, any turn after `a2a_peer_turn_ttl_s`). Push gating only:
+    the guard's lockdown uses `active_peer_turn` / `guard.live_turns`, which ignore the idle rule."""
+    db = path or store.db_path()
+    with store.connect(db) as conn:
         rows = conn.execute(
             "SELECT started_at FROM a2a_busy WHERE session_key = ? UNION ALL SELECT started_at FROM a2a_peer_turn WHERE session_key = ?",
             (session_key, session_key),
         ).fetchall()
-    return any(a2a.turn_fresh(r["started_at"]) for r in rows)
+    return any(a2a.turn_active(r["started_at"], db, session_key) for r in rows)

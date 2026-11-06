@@ -520,6 +520,22 @@ untouched: messages live in a separate `a2a.db`, never in the fragment oplog.
   leased to the first session that polls it (60 s); other sessions skip it. If
   that session never acks, another session gets it after the lease expires. A
   `/session` address goes only to that session.
+- **Queueing:** a live push never lands mid-turn. While a Claude Code session is
+  in a turn (UserPromptSubmit .. Stop, or answering a peer) its poller leaves
+  messages on the hub. A turn interrupted with Esc never runs Stop, so a turn
+  also counts as over after `a2a_busy_idle_s` (default 180) seconds without a
+  tool call; the hard limit is `a2a_peer_turn_ttl_s` (900). The idle rule only
+  decides when to push: the tool lockdown of a peer turn still ends only at Stop
+  or the 900 s limit. The hub keeps unacked messages indefinitely.
+- **Responder session (optional):** run `hippo a2a responder` in a spare
+  terminal or tmux pane on each machine and leave it idle. It starts `claude`
+  with the hippocampus channel and `HIPPOCAMPUS_A2A_RESPONDER=1` (extra
+  arguments pass through, e.g. `--model sonnet`). While a responder has polled
+  the hub in the last 10 minutes, messages to `claude-code@<that device>` go only
+  to responder sessions, so your work sessions never take them; `/session`
+  messages are unaffected. If the responder goes away, device messages fall back
+  to any idle session after that window. `list_agents()` marks responders with
+  `"responder": true`.
 
 **Answering without you (`a2a_auto_answer`, default `true`).** With A2A on,
 `hippo inject` writes a short *standing authorization* into the rules-file

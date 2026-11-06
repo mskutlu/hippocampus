@@ -20,7 +20,7 @@ Subcommands:
     inject         Regenerate top-N file + upsert into all clients
     register       Register MCP server in all clients' configs
     unregister     Remove MCP server from all clients' configs
-    a2a            pause | resume | audit | policy | quarantine (agent-to-agent)
+    a2a            pause | resume | audit | policy | quarantine | responder (agent-to-agent)
 """
 
 from __future__ import annotations
@@ -1751,6 +1751,19 @@ def a2a_alias(mode: str | None) -> None:
     click.echo(f"[{'~' if changed else '='}] {mode} {rc}" + ("" if changed else " (nothing to change)"))
     if changed:
         click.echo("Open a new shell (or `source` the file) to pick it up.")
+
+
+@a2a_group.command("responder", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def a2a_responder(args: tuple[str, ...]) -> None:
+    """Run this device's A2A responder: `claude` with the hippocampus channel and HIPPOCAMPUS_A2A_RESPONDER=1.
+
+    While one runs, device-level messages (client@device) go only to it, never to your work sessions.
+    Keep it idle in a spare terminal/tmux pane. Extra ARGS are passed to claude.
+    """
+    from hippocampus.a2a import alias
+
+    os.execvpe("claude", ["claude", *args, *alias.CHANNELS], {**os.environ, "HIPPOCAMPUS_A2A_RESPONDER": "1"})
 
 
 @a2a_group.command("hook", hidden=True)

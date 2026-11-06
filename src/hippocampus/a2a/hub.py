@@ -24,7 +24,8 @@ def _send(db: Path, q: dict, body: dict) -> dict:
 
 
 def _inbox(db: Path, q: dict, body: dict) -> dict:
-    return store.inbox(db, q.get("address", ""), _int(q.get("since"), "since", 0), _int(q.get("wait"), "wait", 0))
+    return store.inbox(db, q.get("address", ""), _int(q.get("since"), "since", 0), _int(q.get("wait"), "wait", 0),
+                       responder=str(q.get("responder") or "") == "1")
 
 
 def _ack(db: Path, q: dict, body: dict) -> dict:
