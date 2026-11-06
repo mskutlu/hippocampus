@@ -1754,7 +1754,7 @@ def a2a_alias(mode: str | None) -> None:
 
 
 @a2a_group.command("hook", hidden=True)
-@click.argument("event", type=click.Choice(["pretooluse", "stop"]))
+@click.argument("event", type=click.Choice(["pretooluse", "stop", "prompt"]))
 def a2a_hook(event: str) -> None:
     """Claude Code hook entry (fallback when the guard script can't find its Python)."""
     from hippocampus.a2a import guard

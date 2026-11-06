@@ -60,6 +60,8 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     assert "UserPromptSubmit" in claude_hooks
     assert "PostCompaction" not in claude_hooks
     assert "PreToolUse" in claude_hooks and "Stop" in claude_hooks  # a2a guard
+    submit_cmds = [h["command"] for e in claude_hooks["UserPromptSubmit"] for h in e["hooks"]]
+    assert len(submit_cmds) == 2 and any("a2a-guard.sh prompt" in c for c in submit_cmds)  # busy marker beside the context hook
     assert "PreToolUse" not in hooks_obj and "PreToolUse" not in json.loads(
         (fake_home / ".gemini" / "antigravity" / "settings.json").read_text()
     ).get("hooks", {})

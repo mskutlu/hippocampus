@@ -270,12 +270,13 @@ def install_for_devin() -> dict[str, Any]:
 
 
 def _build_a2a_guard_entries(client: str, guard_path: Path) -> dict[str, Any]:
-    """Claude Code only: PreToolUse lockdown + Stop (ends the A2A peer turn). No-op unless a2a is in use."""
+    """Claude Code only: PreToolUse lockdown, Stop (ends the peer/user turn), UserPromptSubmit (marks the session
+    busy so channel pushes wait). No-op unless a2a is in use."""
     def entry(event: str, timeout: int) -> list[dict[str, Any]]:
         return [{"matcher": "", "hooks": [
             {"type": "command", "command": f"bash {guard_path} {event} {client}", "timeout": timeout, "tag": HOOK_TAG}
         ]}]
-    return {"PreToolUse": entry("pretooluse", 5), "Stop": entry("stop", 5)}
+    return {"PreToolUse": entry("pretooluse", 5), "Stop": entry("stop", 5), "UserPromptSubmit": entry("prompt", 5)}
 
 
 def install_for_claude_code() -> dict[str, Any]:
@@ -298,7 +299,9 @@ def install_for_claude_code() -> dict[str, Any]:
     cfg_path = Path.home() / ".claude" / "settings.json"
     _backup(cfg_path)
     cfg = _load_json(cfg_path)
-    entries = {**_build_claude_format_entries(client, start_path, submit_path), **_build_a2a_guard_entries(client, guard_path)}
+    entries = _build_claude_format_entries(client, start_path, submit_path)
+    for event, guard_entries in _build_a2a_guard_entries(client, guard_path).items():
+        entries[event] = entries.get(event, []) + guard_entries
     cfg["hooks"] = _merge_hooks(cfg.get("hooks", {}), entries)
     _write_json(cfg_path, cfg)
     return {"client": client, "config": str(cfg_path), "scripts": [str(start_path), str(submit_path), str(guard_path)]}

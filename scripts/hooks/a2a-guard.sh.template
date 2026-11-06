@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Hippocampus A2A guard for Claude Code: PreToolUse (tool lockdown during an
-# A2A peer turn) and Stop (ends the peer turn).
+# A2A peer turn), Stop (ends the peer/user turn) and UserPromptSubmit (marks
+# the session busy so channel pushes wait).
 #
-# Usage: a2a-guard.sh <pretooluse|stop> <client>
+# Usage: a2a-guard.sh <pretooluse|stop|prompt> <client>
 # Stdin: the Claude Code hook JSON. A denied PreToolUse exits 2 with the reason
 #        on stderr (blocks before permission rules, also under bypassPermissions).
 #
@@ -22,9 +23,10 @@ else
     "$HIPPO_BIN" a2a hook "$EVENT"
 fi
 rc=$?
-[[ $rc -eq 2 && "$EVENT" != "stop" ]] && exit 2  # deny: the guard already wrote the reason to stderr
-# Fail closed: a crashed guard must not let a tool through (Stop never blocks).
-if [[ $rc -ne 0 && "$EVENT" != "stop" ]]; then
+[[ "$EVENT" == "pretooluse" ]] || exit 0  # Stop / UserPromptSubmit never block
+[[ $rc -eq 2 ]] && exit 2  # deny: the guard already wrote the reason to stderr
+# Fail closed: a crashed guard must not let a tool through.
+if [[ $rc -ne 0 ]]; then
     echo "A2A guard failed (rc=$rc); blocking tool call while a2a peer turns may be active." >&2
     exit 2
 fi

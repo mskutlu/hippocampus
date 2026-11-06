@@ -235,8 +235,15 @@ def test_hook_script_end_to_end(a2a_db, tmp_path, monkeypatch):
     r = _run_script(script, "pretooluse", read, env)
     assert r.returncode == 0 and r.stdout == ""
 
+    r = _run_script(script, "prompt", {"session_id": "s1", "hook_event_name": "UserPromptSubmit"}, env)
+    assert r.returncode == 0 and r.stdout == ""
+    from hippocampus.a2a import state, store
+    with store.connect(store.db_path()) as conn:
+        assert conn.execute("SELECT 1 FROM a2a_busy WHERE session_key = 'cc-s1'").fetchone()
+
     r = _run_script(script, "stop", {"session_id": "s1", "hook_event_name": "Stop"}, env)
     assert r.returncode == 0 and r.stdout == ""
+    assert not state.busy("cc-s1")
     r = _run_script(script, "pretooluse", _bash(proj), env)
     assert r.returncode == 0 and r.stdout == ""
 
@@ -256,3 +263,4 @@ def test_hook_script_fails_closed_when_guard_crashes(a2a_db, tmp_path):
     r = _run_script(script, "pretooluse", _bash(tmp_path), {**os.environ})
     assert r.returncode == 2 and "A2A guard failed" in r.stderr
     assert _run_script(script, "stop", {"session_id": "s1"}, {**os.environ}).returncode == 0  # Stop never blocks
+    assert _run_script(script, "prompt", {"session_id": "s1"}, {**os.environ}).returncode == 0  # nor UserPromptSubmit

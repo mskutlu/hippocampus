@@ -73,8 +73,11 @@ CREATE TABLE IF NOT EXISTS a2a_peer_turn (
     sender      TEXT NOT NULL,
     thread_id   TEXT NOT NULL,
     hop         INTEGER NOT NULL,
-    started_at  TEXT NOT NULL
+    started_at  TEXT NOT NULL,
+    trust       TEXT
 );
+-- Claude Code user turn in progress (UserPromptSubmit .. Stop): channel pushes wait for it to end
+CREATE TABLE IF NOT EXISTS a2a_busy (session_key TEXT PRIMARY KEY, started_at TEXT NOT NULL);
 -- remember() calls made during a peer turn; never synced (separate DB file), approved via CLI
 CREATE TABLE IF NOT EXISTS quarantined_fragments (
     id          TEXT PRIMARY KEY,
@@ -108,14 +111,15 @@ def _now() -> str:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Additive columns for a2a.db files created before them."""
-    have = {r["name"] for r in conn.execute("PRAGMA table_info(a2a_messages)")}
-    for col in ("claimed_by", "claimed_at"):
-        if col not in have:
-            try:
-                conn.execute(f"ALTER TABLE a2a_messages ADD COLUMN {col} TEXT")
-            except sqlite3.OperationalError as exc:  # another process added it first
-                if "duplicate column" not in str(exc):
-                    raise
+    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at")), ("a2a_peer_turn", ("trust",))):
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for col in cols:
+            if col not in have:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError as exc:  # another process added it first
+                    if "duplicate column" not in str(exc):
+                        raise
 
 
 @contextmanager

@@ -122,7 +122,7 @@ class Pusher:
         peer_policy = policy.for_sender(sender)
         if peer_policy == "block":
             return  # stays in the hub audit + local inbox row, never delivered
-        db = self.db or store.db_path()
-        state.begin_peer_turn(self.session_key, msg, db)  # lock tools BEFORE the content can reach the model
+        db, trust = self.db or store.db_path(), trust_for(sender)
+        state.begin_peer_turn(self.session_key, msg, db, trust)  # lock tools BEFORE the content can reach the model
         store.local_mark_shown(db, msg["msg_id"])  # the hook must not re-notify
-        asyncio.run_coroutine_threadsafe(self.write_stream.send(build_message(msg, trust_for(sender), peer_policy)), self.loop).result(timeout=10)
+        asyncio.run_coroutine_threadsafe(self.write_stream.send(build_message(msg, trust, peer_policy)), self.loop).result(timeout=10)
