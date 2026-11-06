@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from hippocampus import config
 from hippocampus.clients.registry import CLIENTS, ClientSpec
 
 MCP_ENTRY_NAME = "hippocampus"
@@ -403,6 +404,8 @@ def register(spec: ClientSpec) -> tuple[bool, str]:
     path = spec.mcp_config_path
     if path is None:
         return False, f"{spec.name}: no MCP config path configured"
+    if spec.name == "claude-code" and config.get_setting("claude_code_plugin"):
+        return False, "claude-code: MCP server comes from the hippocampus plugin (`hippo register claude-code --no-plugin` to undo)"
 
     if fmt == "pi-extension":
         return _install_pi_extension(spec)
@@ -476,6 +479,18 @@ def unregister(spec: ClientSpec) -> tuple[bool, str]:
     servers.pop(MCP_ENTRY_NAME, None)
     _write_json(path, data)
     return True, f"{spec.name}: removed from {path}"
+
+
+def set_claude_code_plugin(plugin: bool) -> tuple[bool, str]:
+    """Plugin mode: drop the user-scope MCP entry (the plugin supplies it; both = duplicate tools + two pollers)."""
+    spec = next(c for c in CLIENTS if c.name == "claude-code")
+    config.set_setting("claude_code_plugin", plugin)
+    if not plugin:
+        return register(spec)
+    if spec.mcp_config_path is None or not is_registered(spec):
+        return False, "claude-code: no user-scope MCP entry to remove"
+    _backup(spec.mcp_config_path)
+    return unregister(spec)
 
 
 def register_all() -> list[tuple[str, bool, str]]:

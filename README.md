@@ -478,6 +478,22 @@ of sharing one broad `codex` session.
 After installing or upgrading, restart Codex so it reloads both
 `~/.codex/config.toml` and `~/.codex/AGENTS.md`.
 
+### Agent-to-agent messages in Claude Code (live push)
+
+With `a2a_enabled` on, Claude Code can receive messages from other agents as a
+channel (pushed into the session, no polling by the model). Requires
+`hippocampus-mcp` on the `PATH` Claude Code starts with.
+
+1. Org admin: allow the channel in managed settings:
+   `{ "allowedChannelPlugins": [{ "marketplace": "hippocampus", "plugin": "hippocampus" }] }`
+2. `claude plugin marketplace add mskutlu/hippocampus`, then in Claude Code `/plugin install hippocampus@hippocampus`.
+3. `hippo register claude-code --plugin` removes the user-scope MCP entry (backed up) so the plugin's server is not duplicated; hooks stay. `--no-plugin` reverts.
+4. `hippo config set a2a_enabled true` (or `HIPPOCAMPUS_A2A_ENABLED=1`).
+5. `hippo a2a alias --install` adds `alias claude='claude --channels plugin:hippocampus@hippocampus'` to your shell rc (`--uninstall` removes it; without a flag it only prints the line).
+
+Pushed content is untrusted: tools are restricted until the turn ends (see
+`hippo a2a policy set <peer> answer|act|block`).
+
 ### Session identity
 
 Hippocampus allows multiple active sessions for the same client. The stable

@@ -21,7 +21,7 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     results = hooks.install_all()
     assert len(results) == 4
 
-    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 2;
+    # Devin gets 3 scripts (start, submit, post-compaction); Claude Code gets 3 (+ a2a guard);
     # Antigravity gets 2; Cursor gets 2.
     devin_result = next(r for r in results if r["client"] == "devin")
     claude_result = next(r for r in results if r["client"] == "claude-code")
@@ -29,7 +29,7 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     cursor_result = next(r for r in results if r["client"] == "cursor")
     assert len(devin_result["scripts"]) == 3
     assert any("post-compaction" in s for s in devin_result["scripts"])
-    assert len(claude_result["scripts"]) == 2
+    assert len(claude_result["scripts"]) == 3
     assert len(antigravity_result["scripts"]) == 2
     assert len(cursor_result["scripts"]) == 2
 
@@ -59,6 +59,10 @@ def test_install_creates_scripts_and_registers_hooks(tmp_path, monkeypatch):
     assert "SessionStart" in claude_hooks
     assert "UserPromptSubmit" in claude_hooks
     assert "PostCompaction" not in claude_hooks
+    assert "PreToolUse" in claude_hooks and "Stop" in claude_hooks  # a2a guard
+    assert "PreToolUse" not in hooks_obj and "PreToolUse" not in json.loads(
+        (fake_home / ".gemini" / "antigravity" / "settings.json").read_text()
+    ).get("hooks", {})
 
     # Antigravity check — no PostCompaction.
     antigravity_cfg = json.loads((fake_home / ".gemini" / "antigravity" / "settings.json").read_text())
@@ -160,6 +164,7 @@ def test_status_reports_per_client(tmp_path, monkeypatch):
 
     assert claude["installed"]["SessionStart"] is True
     assert claude["installed"]["UserPromptSubmit"] is True
+    assert claude["installed"]["PreToolUse"] is True and claude["installed"]["Stop"] is True
     # Claude Code doesn't get PostCompaction at all — report should not pretend it's expected.
     assert "PostCompaction" not in claude["installed"]
 

@@ -29,6 +29,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
+import {
+	frameChannelMessage,
+	inboxHasMessages,
+	isPeerPrompt,
+	parseChannelNotification,
+	type ChannelMessage,
+} from "./a2a-frame.ts";
 
 // ---------------------------------------------------------------------------
 // Configuration (rendered at install time)
@@ -42,6 +49,7 @@ const HIPPOCAMPUS_CLIENT = "__HIPPOCAMPUS_CLIENT__";
 const CONTEXT_BUDGET_CHARS = 3500;
 const ASK_TRUNCATE_CHARS = 500;
 const TOOL_CALL_TIMEOUT_MS = 30_000;
+const A2A_CHECK_TIMEOUT_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // MCP client — minimal JSON-RPC 2.0 over stdio
@@ -73,6 +81,7 @@ class McpClient {
 	private buffer = "";
 	private pending = new Map<number, PendingCall>();
 	private initPromise: Promise<void> | null = null;
+	onChannel: (msg: ChannelMessage) => void = () => {};
 
 	private parseInvocation(): [string, string[]] {
 		const tokens = HIPPOCAMPUS_MCP.trim().split(/\s+/).filter(Boolean);
@@ -92,6 +101,7 @@ class McpClient {
 			env: {
 				...process.env,
 				HIPPOCAMPUS_CLIENT,
+				HIPPOCAMPUS_CHANNEL: "1", // server pushes A2A messages as notifications (no-op unless a2a is enabled)
 			},
 		}) as ChildProcessWithoutNullStreams;
 
@@ -121,7 +131,14 @@ class McpClient {
 			this.buffer = this.buffer.slice(nlIdx + 1);
 			if (line) {
 				try {
-					const msg = JSON.parse(line) as JsonRpcResponse;
+					const raw = JSON.parse(line) as unknown;
+					const channelMsg = parseChannelNotification(raw);
+					if (channelMsg) {
+						this.onChannel(channelMsg);
+						nlIdx = this.buffer.indexOf("\n");
+						continue;
+					}
+					const msg = raw as JsonRpcResponse;
 					if (typeof msg.id === "number") {
 						const pending = this.pending.get(msg.id);
 						if (pending) {
@@ -144,7 +161,7 @@ class McpClient {
 		}
 	}
 
-	private send(method: string, params?: unknown): Promise<unknown> {
+	private send(method: string, params?: unknown, timeoutMs = TOOL_CALL_TIMEOUT_MS): Promise<unknown> {
 		this.spawnIfNeeded();
 		const id = this.nextId++;
 		const payload: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
@@ -153,7 +170,7 @@ class McpClient {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				reject(new Error(`hippocampus MCP call '${method}' timed out`));
-			}, TOOL_CALL_TIMEOUT_MS);
+			}, timeoutMs);
 			this.pending.set(id, { resolve, reject, timer });
 			if (!this.proc) {
 				clearTimeout(timer);
@@ -179,7 +196,7 @@ class McpClient {
 		}
 	}
 
-	private ensureInitialized(): Promise<void> {
+	ensureInitialized(): Promise<void> {
 		if (this.initPromise) return this.initPromise;
 		this.initPromise = (async () => {
 			await this.send("initialize", {
@@ -192,9 +209,13 @@ class McpClient {
 		return this.initPromise;
 	}
 
-	async callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; raw: unknown }> {
+	async callTool(
+		name: string,
+		args: Record<string, unknown>,
+		timeoutMs = TOOL_CALL_TIMEOUT_MS,
+	): Promise<{ text: string; raw: unknown }> {
 		await this.ensureInitialized();
-		const result = (await this.send("tools/call", { name, arguments: args })) as {
+		const result = (await this.send("tools/call", { name, arguments: args }, timeoutMs)) as {
 			content?: Array<{ type: string; text?: string }>;
 			isError?: boolean;
 		};
@@ -301,6 +322,17 @@ type ToolName = string;
 export default function hippocampus(pi: ExtensionAPI) {
 	const mcp = new McpClient();
 
+	// A2A peer turn: set when peer content enters the model context (channel push or inbox()), cleared at agent_end.
+	let peerTurnActive = false;
+	let streaming = false;
+
+	mcp.onChannel = (msg) => {
+		peerTurnActive = true; // python already began the peer turn before pushing; lock tools on our side too
+		const text = frameChannelMessage(msg);
+		// idle: sends now and starts a turn; streaming: "steer" queues it for before the next LLM call
+		void Promise.resolve(pi.sendUserMessage(text, streaming ? { deliverAs: "steer" } : undefined)).catch(() => {});
+	};
+
 	function registerHippocampusTool(entry: ToolManifestEntry) {
 		const name: ToolName = entry.name;
 		const schema = Type.Unsafe<Record<string, unknown>>(entry.inputSchema) as TSchema;
@@ -313,6 +345,7 @@ export default function hippocampus(pi: ExtensionAPI) {
 				try {
 					const args = (params ?? {}) as Record<string, unknown>;
 					const { text } = await mcp.callTool(name, args);
+					if (name === "inbox" && inboxHasMessages(text)) peerTurnActive = true;
 					return {
 						content: [{ type: "text", text: text || "{}" }],
 						details: { tool: name, args },
@@ -336,12 +369,47 @@ export default function hippocampus(pi: ExtensionAPI) {
 
 	pi.on("session_start", async () => {
 		hippoExec(["session", "start", "--client", HIPPOCAMPUS_CLIENT]);
+		// The MCP child only starts its A2A poller after `initialized`, so bring it up now, not on first tool call.
+		mcp.ensureInitialized().catch(() => {});
+	});
+
+	pi.on("agent_start", async () => {
+		streaming = true;
+	});
+
+	pi.on("agent_end", async () => {
+		streaming = false;
+		if (!peerTurnActive) return;
+		try {
+			await mcp.callTool("a2a_end_turn", {}, A2A_CHECK_TIMEOUT_MS);
+			peerTurnActive = false;
+		} catch {
+			// keep peerTurnActive: the lock stays on (python TTL also expires it) rather than silently lifting
+		}
+	});
+
+	// Fail closed: while a peer turn is active, any check failure blocks the tool.
+	pi.on("tool_call", async (event, ctx) => {
+		if (!peerTurnActive) return undefined;
+		try {
+			const { text } = await mcp.callTool(
+				"a2a_check_tool",
+				{ tool_name: event.toolName, tool_input: event.input ?? {}, cwd: ctx.cwd },
+				A2A_CHECK_TIMEOUT_MS,
+			);
+			const verdict = JSON.parse(text) as { allow?: boolean; reason?: string };
+			if (verdict.allow === true) return undefined;
+			return { block: true, reason: verdict.reason || "A2A peer-turn restriction" };
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return { block: true, reason: `A2A peer-turn restriction: tool check failed (${message})` };
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => {
 		const promptRaw = (event as { prompt?: string }).prompt ?? "";
 		const prompt = promptRaw.trim();
-		if (prompt) {
+		if (prompt && !isPeerPrompt(prompt)) { // peer text is untrusted: never log/auto-remember it as a user ask
 			const promptLogged = hippoExec(
 				["transcript", "log", "user", "--client", HIPPOCAMPUS_CLIENT, "--source-event", "BeforeAgentStart", "--stdin"],
 				prompt,

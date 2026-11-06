@@ -1,0 +1,13 @@
+{
+  "name": "hippocampus",
+  "version": "0.1.0",
+  "description": "Hippocampus memory MCP server; pushes agent-to-agent (A2A) messages into the live session as a channel. Requires `hippocampus-mcp` on PATH.",
+  "mcpServers": {
+    "hippocampus": {
+      "command": "hippocampus-mcp",
+      "args": [],
+      "env": { "HIPPOCAMPUS_CLIENT": "claude-code", "HIPPOCAMPUS_CHANNEL": "1" }
+    }
+  },
+  "channels": [{ "server": "hippocampus" }]
+}

@@ -193,6 +193,13 @@ def create_app(*, token: str | None = None, db_path: Path | None = None) -> "Fas
             ).fetchone()
         return {"projects": json.loads(row["payload"]) if row else {}}
 
+    from hippocampus import a2a
+
+    if a2a.enabled():
+        from hippocampus.a2a import hub, store
+
+        hub.mount(app, auth, store.db_path(path))
+
     return app
 
 

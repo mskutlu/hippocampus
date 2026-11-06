@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,7 +65,7 @@ def _install_dir_for(client: str) -> Path:
 def _render_script(template_name: str, client: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     src = _repo_template(template_name)
-    body = src.read_text(encoding="utf-8").replace("__HIPPO_BIN__", _hippo_bin())
+    body = src.read_text(encoding="utf-8").replace("__HIPPO_BIN__", _hippo_bin()).replace("__HIPPO_PY__", sys.executable)
     dest.write_text(body, encoding="utf-8")
     st = dest.stat().st_mode
     dest.chmod(st | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -268,10 +269,20 @@ def install_for_devin() -> dict[str, Any]:
     }
 
 
+def _build_a2a_guard_entries(client: str, guard_path: Path) -> dict[str, Any]:
+    """Claude Code only: PreToolUse lockdown + Stop (ends the A2A peer turn). No-op unless a2a is in use."""
+    def entry(event: str, timeout: int) -> list[dict[str, Any]]:
+        return [{"matcher": "", "hooks": [
+            {"type": "command", "command": f"bash {guard_path} {event} {client}", "timeout": timeout, "tag": HOOK_TAG}
+        ]}]
+    return {"PreToolUse": entry("pretooluse", 5), "Stop": entry("stop", 5)}
+
+
 def install_for_claude_code() -> dict[str, Any]:
     """Install hooks into ~/.claude/settings.json (preferred) or ~/.claude.json.
 
-    Claude Code gets SessionStart + UserPromptSubmit only. Its PreCompact /
+    Claude Code gets SessionStart + UserPromptSubmit, plus the A2A guard on
+    PreToolUse + Stop (exits immediately unless a2a is in use). Its PreCompact /
     PostCompact events do NOT support `additionalContext` (community
     issues open as of 2026-05), so we rely on UserPromptSubmit to refresh
     the model's view of the WORKING block on the message that follows a
@@ -281,14 +292,16 @@ def install_for_claude_code() -> dict[str, Any]:
     hooks_dir = _install_dir_for(client)
     start_path = _render_script("session-start", client, hooks_dir / "session-start.sh")
     submit_path = _render_script("user-prompt-submit", client, hooks_dir / "user-prompt-submit.sh")
+    guard_path = _render_script("a2a-guard", client, hooks_dir / "a2a-guard.sh")
 
     # Prefer ~/.claude/settings.json (Claude Code's canonical hooks file).
     cfg_path = Path.home() / ".claude" / "settings.json"
     _backup(cfg_path)
     cfg = _load_json(cfg_path)
-    cfg["hooks"] = _merge_hooks(cfg.get("hooks", {}), _build_claude_format_entries(client, start_path, submit_path))
+    entries = {**_build_claude_format_entries(client, start_path, submit_path), **_build_a2a_guard_entries(client, guard_path)}
+    cfg["hooks"] = _merge_hooks(cfg.get("hooks", {}), entries)
     _write_json(cfg_path, cfg)
-    return {"client": client, "config": str(cfg_path), "scripts": [str(start_path), str(submit_path)]}
+    return {"client": client, "config": str(cfg_path), "scripts": [str(start_path), str(submit_path), str(guard_path)]}
 
 
 def install_for_antigravity() -> dict[str, Any]:
@@ -401,7 +414,7 @@ def status() -> list[dict[str, Any]]:
         (
             "claude-code",
             Path.home() / ".claude" / "settings.json",
-            ("SessionStart", "UserPromptSubmit"),
+            ("SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"),
         ),
         (
             "antigravity",

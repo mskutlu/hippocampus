@@ -1,0 +1,11 @@
+{
+  "name": "hippocampus",
+  "owner": { "name": "mskutlu" },
+  "plugins": [
+    {
+      "name": "hippocampus",
+      "source": "./plugins/claude-code",
+      "description": "Hippocampus memory MCP server with A2A live push (Claude Code channel)"
+    }
+  ]
+}

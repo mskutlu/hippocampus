@@ -20,6 +20,7 @@ Subcommands:
     inject         Regenerate top-N file + upsert into all clients
     register       Register MCP server in all clients' configs
     unregister     Remove MCP server from all clients' configs
+    a2a            pause | resume | audit | policy | quarantine (agent-to-agent)
 """
 
 from __future__ import annotations
@@ -864,11 +865,21 @@ def inject(limit: Optional[int], only: tuple, dry_run: bool, no_sync: bool) -> N
 
 
 @cli.command()
-def register() -> None:
+@click.argument("client", required=False, type=click.Choice(["claude-code"]))
+@click.option("--plugin/--no-plugin", default=None, help="claude-code only: use the hippocampus plugin's MCP server instead of the user-scope entry")
+def register(client: str | None, plugin: bool | None) -> None:
     """Register Hippocampus MCP server in every client's config."""
     _bootstrap()
-    from hippocampus.clients.mcp_config import register_all
-    for name, changed, msg in register_all():
+    from hippocampus.clients import mcp_config
+    if plugin is not None:
+        if client != "claude-code":
+            raise click.UsageError("--plugin/--no-plugin needs the `claude-code` argument")
+        changed, msg = mcp_config.set_claude_code_plugin(plugin)
+        click.echo(f"[{'~' if changed else '='}] {msg}")
+        return
+    for name, changed, msg in mcp_config.register_all():
+        if client and name != client:
+            continue
         flag = "+" if changed else "="
         click.echo(f"[{flag}] {msg}")
 
@@ -1609,6 +1620,137 @@ def hooks_status_cmd() -> None:
     _bootstrap()
     from hippocampus.clients.hooks import status
     click.echo(json.dumps(status(), indent=2))
+
+
+# ---------------------------------------------------------------------------
+# a2a (agent-to-agent messaging)
+# ---------------------------------------------------------------------------
+
+
+def _echo_json(data) -> None:
+    click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@cli.group("a2a")
+def a2a_group() -> None:
+    """Agent-to-agent messaging: pause/resume, audit, peer policy, memory quarantine."""
+
+
+def _mailbox_call(method: str, route: str) -> dict:
+    from hippocampus.a2a import client as a2a_client
+    from hippocampus.a2a.store import A2AError
+
+    try:
+        return a2a_client.Mailbox()._call(method, route)
+    except A2AError as exc:
+        raise click.ClickException(f"{exc.status} {exc.reason}")
+
+
+@a2a_group.command("pause")
+def a2a_pause() -> None:
+    """Stop all A2A delivery and sends (hub, or the local store without sync)."""
+    _echo_json(_mailbox_call("POST", "/v1/a2a/pause"))
+
+
+@a2a_group.command("resume")
+def a2a_resume() -> None:
+    _echo_json(_mailbox_call("POST", "/v1/a2a/resume"))
+
+
+@a2a_group.command("audit")
+@click.option("--limit", default=50, show_default=True)
+@click.option("--local", is_flag=True, help="This device's store (quarantine events) instead of the hub")
+def a2a_audit(limit: int, local: bool) -> None:
+    from hippocampus.a2a import store
+
+    _echo_json(store.audit(store.db_path(), limit) if local else _mailbox_call("GET", f"/v1/a2a/audit?limit={int(limit)}")["audit"])
+
+
+@a2a_group.group("policy")
+def a2a_policy() -> None:
+    """Per-peer policy: `answer` (default, tools locked down), `act` (trusted peer) or `block` (never delivered)."""
+
+
+@a2a_policy.command("set")
+@click.argument("address")
+@click.argument("value", type=click.Choice(["answer", "act", "block"]))
+def a2a_policy_set(address: str, value: str) -> None:
+    """ADDRESS is `client@device` (any session) or `client@device/session`."""
+    from hippocampus.a2a import policy
+
+    policy.set_for(address, value)
+    _echo_json(policy.table())
+
+
+@a2a_policy.command("list")
+def a2a_policy_list() -> None:
+    from hippocampus.a2a import policy
+
+    _echo_json(policy.table())
+
+
+@a2a_group.group("quarantine")
+def a2a_quarantine() -> None:
+    """remember() calls made while answering a peer; nothing reaches memory until approved."""
+
+
+@a2a_quarantine.command("list")
+def a2a_quarantine_list() -> None:
+    from hippocampus.a2a import store
+
+    _echo_json(store.quarantine_list(store.db_path()))
+
+
+@a2a_quarantine.command("approve")
+@click.argument("qid")
+def a2a_quarantine_approve(qid: str) -> None:
+    """Store it via the normal remember path (it syncs from then on), then drop the quarantine row."""
+    _bootstrap()
+    from hippocampus.a2a import store
+    from hippocampus.mcp import tools
+
+    row = store.quarantine_get(store.db_path(), qid)
+    if row is None:
+        raise click.ClickException(f"no quarantined item {qid}")
+    out = tools.remember(**row["args"])
+    store.quarantine_resolve(store.db_path(), qid, "quarantine_approve", out["fragment"]["id"])
+    _echo_json(out)
+
+
+@a2a_quarantine.command("reject")
+@click.argument("qid")
+def a2a_quarantine_reject(qid: str) -> None:
+    from hippocampus.a2a import store
+
+    if not store.quarantine_resolve(store.db_path(), qid, "quarantine_reject"):
+        raise click.ClickException(f"no quarantined item {qid}")
+    click.echo(f"rejected {qid}")
+
+
+@a2a_group.command("alias")
+@click.option("--install", "mode", flag_value="install", help="Append the alias (marked block) to your shell rc")
+@click.option("--uninstall", "mode", flag_value="uninstall", help="Remove the marked block")
+def a2a_alias(mode: str | None) -> None:
+    """Print (or install) `alias claude='claude --channels plugin:hippocampus@hippocampus'`."""
+    from hippocampus.a2a import alias
+
+    if mode is None:
+        click.echo(alias.ALIAS_LINE)
+        return
+    rc = alias.rc_file()
+    changed = alias.install(rc) if mode == "install" else alias.uninstall(rc)
+    click.echo(f"[{'~' if changed else '='}] {mode} {rc}" + ("" if changed else " (nothing to change)"))
+    if changed:
+        click.echo("Open a new shell (or `source` the file) to pick it up.")
+
+
+@a2a_group.command("hook", hidden=True)
+@click.argument("event", type=click.Choice(["pretooluse", "stop"]))
+def a2a_hook(event: str) -> None:
+    """Claude Code hook entry (fallback when the guard script can't find its Python)."""
+    from hippocampus.a2a import guard
+
+    sys.exit(guard.main([event]))
 
 
 # ---------------------------------------------------------------------------

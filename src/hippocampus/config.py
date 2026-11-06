@@ -186,6 +186,13 @@ _DEFAULTS: dict[str, Any] = {
     "evidence_correction_max_targets": 3,
     "auto_pin_min_helped": 3,
     "rebase_compress": 0.5,
+    "a2a_enabled": False,                  # agent-to-agent messaging (HIPPOCAMPUS_A2A_ENABLED overrides)
+    "a2a_max_hops": 3,
+    "a2a_max_thread_msgs": 20,
+    "a2a_rate_per_min": 30,
+    "a2a_peer_turn_ttl_s": 900,            # a peer turn without a Stop hook expires after this
+    "claude_code_plugin": False,           # hippo register claude-code --plugin: MCP comes from the plugin, not ~/.claude.json
+    "a2a_peer_policy": {},                 # address or client@device -> "answer" | "act"
 }
 
 
