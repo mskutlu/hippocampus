@@ -61,6 +61,9 @@ the hook notice. Live multi-device runs are tracked under Risks.
 | Enforcement | PreToolUse hook with exit 2 | Documented by Anthropic to block before permission rules and under bypass modes. Read-only, stdlib-only, fails closed. |
 | `act` / `block` / `answer` | Per-peer policy in config, default `answer` | Trust is a per-peer owner decision, not a per-message one. |
 | Shell wrapper | Function, not alias | `--channels` is variadic; an alias prepends it and swallows the subcommand (`--channels entries must be tagged`). A function appends it last and bypasses subcommands. |
+| Auto-answer authorization | User's standing instruction in the rules-file block (`hippo inject`) and SessionStart/PostCompaction hook context, gated by `a2a_auto_answer` (default on); pushes carry `trust=own_device|unknown` | Live test 2026-11-06: an idle session woke on push but refused to answer because the message was untrusted and the user had asked nothing. Authorization must come from user-controlled rules/settings, never from message content. It covers answering via `reply()` only; lockdown and quarantine are unchanged. |
+| Own device | Sender device == this device, or listed in the hub's `/v1/health` device list (cached 5 min per MCP process) | No network call per message; fails closed to `unknown`. Device ids are self-declared under the shared token (see Risks). |
+| Device-address delivery | Hub leases a base-address (`client@device`) message to the first polling session for 60 s (`claimed_by`/`claimed_at`, additive migration) | Two sessions on one device both fetched the same message. Ack stays first-wins. |
 | Plugin MCP | `hippo register claude-code --plugin` removes the user-scope entry | Otherwise two servers (two pollers, duplicate tools). |
 
 ## 5. Non-Goals
@@ -82,6 +85,7 @@ the hook notice. Live multi-device runs are tracked under Risks.
 | Idle-session wake on channel push | Not verified live. |
 | pi end to end | Not verified live. |
 | `claude` subcommand list drifts | The function hard-codes subcommands (from Claude Code 2.1.319); refresh when new ones ship. |
+| Auto-answer by a spoofed own device | Any token holder can claim a known device id and get answers (never actions). Same boundary as the shared token; turn off with `a2a_auto_answer=false`. |
 | Shared token = shared identity | Any device with the token can claim any address. Acceptable within one account; blocks phase 2 until per-peer tokens exist. |
 
 ## 7. Roadmap

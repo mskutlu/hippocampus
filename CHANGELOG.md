@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — A2A: own-device agents answer without a human
+
+- `a2a_auto_answer` (default `true`): with A2A on, `hippo inject` adds a short
+  standing user authorization to the rules-file memory block, and the
+  SessionStart / PostCompaction hook context repeats it. Agents may answer
+  own-device messages with `reply()` without waiting for the user. Content stays
+  untrusted data; the tool lockdown and memory quarantine are unchanged.
+- Channel pushes carry `trust` (`own_device` when the sender device is this
+  device or in the hub's `/v1/health` device list, cached 5 min; else
+  `unknown`), `policy` and `auto_answer`. The channel instructions, pi framing
+  and hook notice say the same.
+- A message to a device address (`client@device`) is leased to one polling
+  session for 60 s instead of going to every session; re-offered if unacked.
+  Additive `a2a.db` migration (`claimed_by`, `claimed_at`).
+
 ### Added — A2A: agent-to-agent messaging (phase 1)
 
 - Agents on any device message each other through the sync hub. Off by default

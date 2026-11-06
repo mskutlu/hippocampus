@@ -22,6 +22,7 @@ from hippocampus import config
 
 MAX_CONTENT_BYTES = 16 * 1024
 PRESENCE_SECONDS = 600
+LEASE_SECONDS = 60  # a device-level message claimed by one session but not acked is re-offered after this
 ADDRESS_RE = re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+(/[A-Za-z0-9_.=-]+)?$")
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")  # msg/thread ids are shown to models: keep them inert
 
@@ -105,6 +106,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive columns for a2a.db files created before them."""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(a2a_messages)")}
+    for col in ("claimed_by", "claimed_at"):
+        if col not in have:
+            try:
+                conn.execute(f"ALTER TABLE a2a_messages ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError as exc:  # another process added it first
+                if "duplicate column" not in str(exc):
+                    raise
+
+
 @contextmanager
 def connect(path: Path) -> Iterator[sqlite3.Connection]:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +127,7 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA busy_timeout = 10000")
         conn.executescript(_SCHEMA)
+        _migrate(conn)
         conn.execute("BEGIN IMMEDIATE")  # serialises the limit checks with the insert
         try:
             yield conn
@@ -220,10 +234,18 @@ def send(path: Path, *, sender: str, to: str, content: str, msg_id: str,
 
 
 def _fetch(conn, address: str, since: int) -> list[dict[str, Any]]:
+    # A device-level (base) address is leased to one polling session at a time; session-qualified rows are exclusive anyway.
+    base = base_address(address)
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=LEASE_SECONDS)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     rows = conn.execute(
-        "SELECT * FROM a2a_messages WHERE seq > ? AND delivered_at IS NULL AND (recipient = ? OR recipient = ?) ORDER BY seq LIMIT 100",
-        (since, address, base_address(address)),
+        "SELECT * FROM a2a_messages WHERE seq > ? AND delivered_at IS NULL AND ((recipient = ? AND instr(recipient, '/') > 0) OR (recipient = ? AND "
+        "(claimed_by IS NULL OR claimed_by = ? OR claimed_at < ?))) ORDER BY seq LIMIT 100",
+        (since, address, base, address, cutoff),
     ).fetchall()
+    claim = [r["msg_id"] for r in rows if r["recipient"] == base]
+    if claim:  # same BEGIN IMMEDIATE txn as the select: a concurrent poller cannot claim the same rows
+        now = _now()
+        conn.executemany("UPDATE a2a_messages SET claimed_by = ?, claimed_at = ? WHERE msg_id = ?", [(address, now, m) for m in claim])
     return [_msg_dict(r) for r in rows]
 
 

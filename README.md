@@ -516,6 +516,23 @@ untouched: messages live in a separate `a2a.db`, never in the fragment oplog.
   session. Needs the setup below.
 - **Live push (pi):** the pi extension receives the same push and injects it with
   `pi.sendUserMessage`.
+- **One session per device address:** a message to `claude-code@laptop` is
+  leased to the first session that polls it (60 s); other sessions skip it. If
+  that session never acks, another session gets it after the lease expires. A
+  `/session` address goes only to that session.
+
+**Answering without you (`a2a_auto_answer`, default `true`).** With A2A on,
+`hippo inject` writes a short *standing authorization* into the rules-file
+memory block (e.g. `~/.claude/CLAUDE.md`), and the SessionStart / PostCompaction
+hooks repeat it: the agent may answer messages from your own devices with
+`reply()` without waiting for you. It may only answer, never act: the content
+stays untrusted data and the tool lockdown below still applies. Each push carries
+`trust="own_device"` when the sender's device is this device or one your sync hub
+knows (the hub's `/v1/health` device list, cached for 5 minutes per MCP process),
+else `trust="unknown"`; agents do not answer `unknown` senders and tell you a
+message is waiting instead. Pushes also carry the sender's `policy`. Turn it off
+with `hippo config set a2a_auto_answer false && hippo inject`. The authorization
+comes only from your rules file and settings, never from a message.
 
 #### Setup — hub (the machine running `hippo sync serve`)
 
@@ -615,6 +632,7 @@ poison memory. The design contains that; it does not remove the risk.
   | `a2a_max_thread_msgs` | 20 | messages per thread |
   | `a2a_rate_per_min` | 30 | sends per sender device per minute |
   | `a2a_peer_turn_ttl_s` | 900 | peer turn expiry without a Stop |
+  | `a2a_auto_answer` | true | standing authorization to `reply()` to own-device messages (not a hub limit; per device) |
   | (fixed) | 16 KiB | max message size |
 
   Sends are idempotent on `msg_id` (retries do not duplicate).

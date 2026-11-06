@@ -51,7 +51,8 @@ def test_notification_shape(hippo_env):
     wire = json.loads(channel.build_message(MSG).message.model_dump_json(exclude_none=True))
     assert wire["method"] == "notifications/claude/channel" and "id" not in wire
     p = wire["params"]
-    assert set(p["meta"]) == {"msg_id", "from_addr", "thread", "hop"}
+    assert set(p["meta"]) == {"msg_id", "from_addr", "thread", "hop", "trust", "policy", "auto_answer"}
+    assert p["meta"]["trust"] == "unknown" and p["meta"]["policy"] == "answer"
     assert all(k.replace("_", "").isalnum() for k in p["meta"]) and p["meta"]["from_addr"] == "codex@peer/x"
     assert p["meta"]["hop"] == "1"
     assert p["content"].startswith('<a2a-message from="codex@peer/x" untrusted>')

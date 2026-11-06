@@ -109,6 +109,10 @@ def format_injection_block(
                 "",
             ]
         )
+    from hippocampus import a2a
+
+    if a2a.auto_answer():
+        body_lines.extend(["> " + a2a.AUTHORIZATION, ""])
     body_lines.extend(bullets if bullets else ["_(no fragments stored yet)_"])
     body_lines.extend(["", config.INJECTION_MARKER_END])
     return "\n".join(body_lines) + "\n"

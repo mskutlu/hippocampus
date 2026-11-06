@@ -90,9 +90,9 @@ def test_pause_resume(db):
 def test_ack_first_wins_and_session_matching(db):
     from hippocampus.a2a import store
 
-    _send(db, "k0", to="claude-code@mac")  # base address reaches any session
+    _send(db, "k0", to="claude-code@mac")  # base address reaches any session, leased to the first poller
     assert len(store.inbox(db, "claude-code@mac/cc-1")["messages"]) == 1
-    assert len(store.inbox(db, "claude-code@mac/cc-2")["messages"]) == 1
+    assert store.inbox(db, "claude-code@mac/cc-2")["messages"] == []
     assert store.ack(db, "claude-code@mac/cc-1", ["k0"]) == 1
     assert store.ack(db, "claude-code@mac/cc-2", ["k0"]) == 0
     assert store.inbox(db, "claude-code@mac/cc-2")["messages"] == []
@@ -125,3 +125,33 @@ def test_peer_turn_seam(db):
     assert state.active_peer_turn("k", db)["msg_id"] == "m"
     state.end_peer_turn("k", db)
     assert state.active_peer_turn("k", db) is None
+
+
+def test_device_address_leased_to_one_poller_then_expires(db, monkeypatch):
+    from hippocampus.a2a import store
+
+    _send(db, "l0", to="claude-code@mac")
+    assert [m["msg_id"] for m in store.inbox(db, "claude-code@mac/cc-1")["messages"]] == ["l0"]
+    assert store.inbox(db, "claude-code@mac/cc-2")["messages"] == []
+    assert len(store.inbox(db, "claude-code@mac/cc-1")["messages"]) == 1  # the claimer sees it again until ack
+    monkeypatch.setattr(store, "LEASE_SECONDS", -1)  # lease expired, still unacked: re-claimable
+    assert [m["msg_id"] for m in store.inbox(db, "claude-code@mac/cc-2")["messages"]] == ["l0"]
+    monkeypatch.setattr(store, "LEASE_SECONDS", 60)
+    assert store.inbox(db, "claude-code@mac/cc-1")["messages"] == []  # cc-2 holds it now
+    assert store.ack(db, "claude-code@mac/cc-1", ["l0"]) == 1  # ack stays first-wins, not claimer-only
+    assert store.ack(db, "claude-code@mac/cc-2", ["l0"]) == 0
+
+
+def test_lease_migration_on_old_db(db):
+    import sqlite3
+
+    from hippocampus.a2a import store
+
+    old = sqlite3.connect(db)
+    old.executescript(store._SCHEMA)  # pre-lease schema has no claimed_* columns
+    old.execute("INSERT INTO a2a_messages(msg_id, thread_id, sender, recipient, content, hop, created_at) "
+                "VALUES ('o1','t','codex@mac','claude-code@mac','hi',0,'2026-01-01T00:00:00.000000Z')")
+    old.commit()
+    old.close()
+    assert [m["msg_id"] for m in store.inbox(db, "claude-code@mac/cc-1")["messages"]] == ["o1"]
+    assert store.inbox(db, "claude-code@mac/cc-2")["messages"] == []
