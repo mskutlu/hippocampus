@@ -377,6 +377,11 @@ def _uninstall_hermes_yaml(spec: ClientSpec) -> tuple[bool, str]:
     return True, f"{spec.name}: removed from {path}"
 
 
+def claude_code_plugin_installed() -> bool:
+    data = _load_json(Path.home() / ".claude" / "plugins" / "installed_plugins.json")
+    return bool(data.get("plugins", {}).get("hippocampus@hippocampus"))
+
+
 def is_registered(spec: ClientSpec) -> bool:
     if spec.mcp_config_format == "codex-toml":
         return _codex_toml_is_registered(spec)

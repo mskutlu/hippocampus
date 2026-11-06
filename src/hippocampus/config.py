@@ -11,6 +11,7 @@ and ad-hoc overrides stay easy.
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 from typing import Any
@@ -231,6 +232,8 @@ def get_setting(key: str) -> Any:
 
 def set_setting(key: str, value: Any) -> None:
     """Persist a setting in `config.json`. Unknown keys are allowed."""
+    if isinstance(value, str) and value.endswith(REDACTED_MARK):  # a masked value echoed back would destroy the secret
+        raise ValueError(f"refusing to store redacted value for {key!r}")
     ensure_dirs()
     data = _load_file_config()
     data[key] = value
@@ -241,6 +244,20 @@ def set_setting(key: str, value: Any) -> None:
 def all_settings() -> dict[str, Any]:
     """Effective settings (env + file + defaults) for `hippo config show`."""
     return {k: get_setting(k) for k in _DEFAULTS}
+
+
+_SECRET_KEY = re.compile(r"token|secret|password|api_key", re.I)
+
+
+REDACTED_MARK = "…(redacted)"
+
+
+def redacted(settings: dict[str, Any]) -> dict[str, Any]:
+    """Copy of `settings` with secret string values masked (first 4 chars + marker)."""
+    return {
+        k: (f"{v[:4]}{REDACTED_MARK}" if isinstance(v, str) and v and _SECRET_KEY.search(k) else v)
+        for k, v in settings.items()
+    }
 
 
 def config_path() -> Path:

@@ -116,10 +116,13 @@ def doctor() -> None:
         rules_text = spec.rules_path.read_text(encoding="utf-8") if spec.rules_path.exists() else ""
         long_ok = config.INJECTION_MARKER_START in rules_text
         working_ok = config.WORKING_MARKER_START in rules_text
-        mcp_ok = mcp_cfg.is_registered(spec)
+        plugin_mode = spec.name == "claude-code" and bool(config.get_setting("claude_code_plugin"))
+        mcp_ok = mcp_cfg.claude_code_plugin_installed() if plugin_mode else mcp_cfg.is_registered(spec)
         badge_long = OK_MARK if long_ok else MISS_MARK
         badge_work = OK_MARK if working_ok else MISS_MARK
         badge_mcp = OK_MARK if mcp_ok else MISS_MARK
+        if plugin_mode:
+            badge_mcp = "plugin" if mcp_ok else f"{MISS_MARK} (plugin not installed)"
         target = "ok" if long_ok and working_ok and mcp_ok else "warn"
         line = f"{spec.label:<14} long:{badge_long} working:{badge_work} mcp:{badge_mcp}  ({spec.rules_path})"
         (ok if target == "ok" else warn).append(line)
@@ -1127,7 +1130,7 @@ def config_show() -> None:
     click.echo(json.dumps(
         {
             "path": str(config.config_path()),
-            "settings": config.all_settings(),
+            "settings": config.redacted(config.all_settings()),
         },
         indent=2,
     ))
@@ -1145,8 +1148,14 @@ def config_set(key: str, value: str) -> None:
     except _json.JSONDecodeError:
         parsed = value
     normalised_key = key.replace("-", "_").lower()
-    config.set_setting(normalised_key, parsed)
-    click.echo(json.dumps({"set": {normalised_key: parsed}, "all": config.all_settings()}, indent=2))
+    try:
+        config.set_setting(normalised_key, parsed)
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps({
+        "set": config.redacted({normalised_key: parsed}),
+        "all": config.redacted(config.all_settings()),
+    }, indent=2))
 
 
 @cli.group(name="confidence")

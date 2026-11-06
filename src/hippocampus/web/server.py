@@ -319,14 +319,17 @@ def create_app() -> "FastAPI":
     def api_config_get() -> dict:
         return {
             "path": str(config.config_path()),
-            "settings": config.all_settings(),
+            "settings": config.redacted(config.all_settings()),
         }
 
     @app.post("/api/config")
     def api_config_set(body: ConfigBody = Body(...)) -> dict:
         if body.key not in config._DEFAULTS:
             raise HTTPException(status_code=422, detail="unknown setting")
-        config.set_setting(body.key, body.value)
+        try:
+            config.set_setting(body.key, body.value)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         return api_config_get()
 
     # ------------------------------------------------------------------
