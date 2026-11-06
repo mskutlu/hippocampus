@@ -222,10 +222,12 @@ def test_alias_install_uninstall_idempotent(hippo_env, monkeypatch):
     rc.write_text("export A=1\n")
     run = lambda *a: CliRunner().invoke(cli, ["a2a", "alias", *a], catch_exceptions=False).output  # noqa: E731
 
-    assert run().strip() == "alias claude='claude --channels plugin:hippocampus@hippocampus'"
+    from hippocampus.a2a.alias import BLOCK
+
+    assert run() == BLOCK and BLOCK.splitlines()[1] == "unalias claude 2>/dev/null"
     assert "[~]" in run("--install")
     once = rc.read_text()
-    assert once.count("alias claude=") == 1 and once.startswith("export A=1\n")
+    assert once.count("claude() {") == 1 and "alias claude=" not in once and once.startswith("export A=1\n")
     assert "[=]" in run("--install") and rc.read_text() == once
     assert "[~]" in run("--uninstall")
     assert rc.read_text() == "export A=1\n"
@@ -233,3 +235,42 @@ def test_alias_install_uninstall_idempotent(hippo_env, monkeypatch):
 
     monkeypatch.setenv("SHELL", "/bin/bash")
     assert "[~]" in run("--install") and (Path.home() / ".bashrc").exists()
+
+
+def test_alias_upgrade_from_old_alias_block(hippo_env, monkeypatch):
+    from hippocampus.a2a import alias
+
+    rc = Path.home() / ".zshrc"
+    rc.parent.mkdir(parents=True, exist_ok=True)
+    old = f"export A=1\n\n{alias.BEGIN}\nalias claude='claude --channels plugin:hippocampus@hippocampus'\n{alias.END}\nexport B=2\n"
+    rc.write_text(old)
+    assert alias.install(rc)
+    new = rc.read_text()
+    assert "alias claude=" not in new and new.count("claude() {") == 1
+    assert new.startswith("export A=1\n") and "export B=2" in new
+
+
+@pytest.mark.parametrize("sh", ["zsh", "bash"])
+def test_alias_function_argv_in_real_shell(tmp_path, sh):
+    import shutil
+
+    from hippocampus.a2a import alias
+
+    if not shutil.which(sh):
+        pytest.skip(f"{sh} not installed")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "claude"
+    stub.write_text('#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done\n')
+    stub.chmod(0o755)
+    rc = tmp_path / "rc"
+    rc.write_text("alias claude='echo old'\n" + alias.BLOCK)  # a pre-existing alias must not break the function
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+
+    def argv(cmd: str) -> list[str]:
+        r = subprocess.run([sh, "-c", f"source {rc}; {cmd}"], capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.splitlines()
+
+    assert argv("claude plugin install x") == ["plugin", "install", "x"]
+    assert argv('claude "fix bug"') == ["fix bug", "--channels", "plugin:hippocampus@hippocampus"]

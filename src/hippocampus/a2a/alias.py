@@ -1,12 +1,23 @@
-"""`claude` shell alias that opts every session into the hippocampus channel."""
+"""`claude` shell function that opts every session into the hippocampus channel."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-ALIAS_LINE = "alias claude='claude --channels plugin:hippocampus@hippocampus'"
 BEGIN, END = "# >>> hippocampus a2a >>>", "# <<< hippocampus a2a <<<"
+# --channels is variadic: it goes LAST so it can't swallow a subcommand or prompt; subcommands skip it.
+# shortcut: subcommand list is from Claude Code 2.1.319 `--help`, refresh when new ones ship.
+FUNCTION = """unalias claude 2>/dev/null
+claude() {
+  case "${1:-}" in
+    agents|attach|auth|auto-mode|doctor|gateway|import|install|logs|mcp|plugin|plugins|purge|respawn|rm|setup-token|stop|kill|ultrareview|update|upgrade|-p|--print|-v|--version|-h|--help)
+      command claude "$@" ;;
+    *)
+      command claude "$@" --channels plugin:hippocampus@hippocampus ;;
+  esac
+}"""
+BLOCK = f"{BEGIN}\n{FUNCTION}\n{END}\n"
 
 
 def rc_file() -> Path:
@@ -28,7 +39,7 @@ def install(rc: Path) -> bool:
     """True if the file changed."""
     old = rc.read_text(encoding="utf-8") if rc.exists() else ""
     base = _strip(old)
-    new = (base.rstrip("\n") + "\n\n" if base.strip() else "") + f"{BEGIN}\n{ALIAS_LINE}\n{END}\n"
+    new = (base.rstrip("\n") + "\n\n" if base.strip() else "") + BLOCK
     if new == old:
         return False
     rc.write_text(new, encoding="utf-8")

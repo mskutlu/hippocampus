@@ -1728,14 +1728,14 @@ def a2a_quarantine_reject(qid: str) -> None:
 
 
 @a2a_group.command("alias")
-@click.option("--install", "mode", flag_value="install", help="Append the alias (marked block) to your shell rc")
+@click.option("--install", "mode", flag_value="install", help="Append the shell function (marked block) to your shell rc")
 @click.option("--uninstall", "mode", flag_value="uninstall", help="Remove the marked block")
 def a2a_alias(mode: str | None) -> None:
-    """Print (or install) `alias claude='claude --channels plugin:hippocampus@hippocampus'`."""
+    """Print (or install) a `claude` shell function that adds `--channels plugin:hippocampus@hippocampus`."""
     from hippocampus.a2a import alias
 
     if mode is None:
-        click.echo(alias.ALIAS_LINE)
+        click.echo(alias.BLOCK, nl=False)
         return
     rc = alias.rc_file()
     changed = alias.install(rc) if mode == "install" else alias.uninstall(rc)
