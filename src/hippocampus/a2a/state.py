@@ -15,12 +15,12 @@ from hippocampus.a2a import store
 
 
 def begin_peer_turn(session_key: str, msg: dict[str, Any], path: Path | None = None, trust: str = "unknown", origin: str = "auto") -> None:
-    """`trust` (channel.trust_for) is stored so the hook-side guard can word its deny without a network call. `origin` ("auto"|"user")
-    is sticky within a fresh turn: a later inbox() re-begin must not reclassify a pushed turn as user-started."""
+    """`trust` (channel.trust_for) is stored so the hook-side guard can word its deny without a network call. `origin` ("auto"|"user"):
+    "user" (inbox() in a user-started turn) never overrides a fresh turn's origin; "auto" (a push) always writes "auto"."""
     sender = msg.get("from") or msg.get("sender") or ""
     with store.connect(path or store.db_path()) as conn:
         old = conn.execute("SELECT started_at, origin FROM a2a_peer_turn WHERE session_key = ?", (session_key,)).fetchone()
-        if old and a2a.turn_fresh(old["started_at"]):
+        if origin == "user" and old and a2a.turn_fresh(old["started_at"]):
             origin = old["origin"] or "auto"
         conn.execute(
             "INSERT OR REPLACE INTO a2a_peer_turn(session_key, msg_id, sender, thread_id, hop, started_at, trust, origin) VALUES (?,?,?,?,?,?,?,?)",

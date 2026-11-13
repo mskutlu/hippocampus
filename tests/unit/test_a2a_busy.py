@@ -353,6 +353,11 @@ def test_auto_turn_origin(a2a_on):
     state.begin_peer_turn(k, msg, origin="user")  # user turn reads its inbox
     assert not state.auto_turn(k)
     state.end_turn(k)
+    state.mark_busy(k)
+    state.begin_peer_turn(k, msg, origin="user")  # Esc'd user turn: row stays fresh
+    state.begin_peer_turn(k, msg)  # a later push is automatic
+    assert state.auto_turn(k)
+    state.end_turn(k)
     state.begin_peer_turn(k, msg)
     with store.connect(store.db_path()) as conn:
         conn.execute("UPDATE a2a_peer_turn SET started_at = '2000-01-01T00:00:00.000000Z' WHERE session_key = ?", (k,))
