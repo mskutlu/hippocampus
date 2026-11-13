@@ -14,13 +14,17 @@ from hippocampus import a2a
 from hippocampus.a2a import store
 
 
-def begin_peer_turn(session_key: str, msg: dict[str, Any], path: Path | None = None, trust: str = "unknown") -> None:
-    """`trust` (channel.trust_for) is stored so the hook-side guard can word its deny without a network call."""
+def begin_peer_turn(session_key: str, msg: dict[str, Any], path: Path | None = None, trust: str = "unknown", origin: str = "auto") -> None:
+    """`trust` (channel.trust_for) is stored so the hook-side guard can word its deny without a network call. `origin` ("auto"|"user")
+    is sticky within a fresh turn: a later inbox() re-begin must not reclassify a pushed turn as user-started."""
     sender = msg.get("from") or msg.get("sender") or ""
     with store.connect(path or store.db_path()) as conn:
+        old = conn.execute("SELECT started_at, origin FROM a2a_peer_turn WHERE session_key = ?", (session_key,)).fetchone()
+        if old and a2a.turn_fresh(old["started_at"]):
+            origin = old["origin"] or "auto"
         conn.execute(
-            "INSERT OR REPLACE INTO a2a_peer_turn(session_key, msg_id, sender, thread_id, hop, started_at, trust) VALUES (?,?,?,?,?,?,?)",
-            (session_key, msg["msg_id"], sender, msg["thread_id"], int(msg.get("hop") or 0), store._now(), trust),
+            "INSERT OR REPLACE INTO a2a_peer_turn(session_key, msg_id, sender, thread_id, hop, started_at, trust, origin) VALUES (?,?,?,?,?,?,?,?)",
+            (session_key, msg["msg_id"], sender, msg["thread_id"], int(msg.get("hop") or 0), store._now(), trust, origin),
         )
 
 
@@ -38,14 +42,15 @@ def active_peer_turn(session_key: str, path: Path | None = None) -> dict[str, An
     return dict(row) if row else None
 
 
-def auto_turn(session_key: str, path: Path | None = None) -> bool:
-    """A fresh peer turn that no user prompt started (a busy row older than the peer turn = human-driven). Ambiguous = automatic."""
+def has_busy_row(session_key: str, path: Path | None = None) -> bool:
     with store.connect(path or store.db_path()) as conn:
-        turn = conn.execute("SELECT started_at FROM a2a_peer_turn WHERE session_key = ?", (session_key,)).fetchone()
-        if not turn or not a2a.turn_fresh(turn["started_at"]):
-            return False
-        busy = conn.execute("SELECT started_at FROM a2a_busy WHERE session_key = ?", (session_key,)).fetchone()
-    return not (busy and busy["started_at"] < turn["started_at"])
+        return conn.execute("SELECT 1 FROM a2a_busy WHERE session_key = ?", (session_key,)).fetchone() is not None
+
+
+def auto_turn(session_key: str, path: Path | None = None) -> bool:
+    """A fresh peer turn that was not begun inside a user-started turn (origin "user"). Ambiguous = automatic."""
+    turn = active_peer_turn(session_key, path)
+    return bool(turn) and turn["origin"] != "user"
 
 
 def mark_busy(session_key: str, path: Path | None = None) -> None:

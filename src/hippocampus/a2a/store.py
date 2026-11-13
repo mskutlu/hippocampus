@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS a2a_peer_turn (
     thread_id   TEXT NOT NULL,
     hop         INTEGER NOT NULL,
     started_at  TEXT NOT NULL,
-    trust       TEXT
+    trust       TEXT,
+    origin      TEXT
 );
 -- Claude Code user turn in progress (UserPromptSubmit .. Stop): channel pushes wait for it to end
 CREATE TABLE IF NOT EXISTS a2a_busy (session_key TEXT PRIMARY KEY, started_at TEXT NOT NULL);
@@ -112,7 +113,7 @@ def _now() -> str:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Additive columns for a2a.db files created before them."""
-    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at", "auto")), ("a2a_peer_turn", ("trust",)), ("a2a_presence", ("responder",))):
+    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at", "auto")), ("a2a_peer_turn", ("trust", "origin")), ("a2a_presence", ("responder",))):
         have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         for col in cols:
             if col not in have:

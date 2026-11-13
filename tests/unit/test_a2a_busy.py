@@ -338,15 +338,23 @@ def test_refetched_stored_message_does_not_refire_callback(a2a_on, monkeypatch):
     assert got == [mid]
 
 
-def test_auto_turn(a2a_on):
+def test_auto_turn_origin(a2a_on):
     from hippocampus.a2a import state, store
 
-    k = "cc-s1"
+    k, msg = "cc-s1", {"msg_id": "m1", "thread_id": "t1", "from": PEER}
     assert not state.auto_turn(k)  # no peer turn: human-driven
-    state.begin_peer_turn(k, {"msg_id": "m1", "thread_id": "t1", "from": PEER})
-    assert state.auto_turn(k)  # peer turn only
+    state.begin_peer_turn(k, msg)
+    assert state.auto_turn(k)  # pushed turn
+    state.mark_busy(k)  # harness wrote a busy row after the push
+    state.begin_peer_turn(k, msg, origin="user")  # inbox() inside the pushed turn
+    assert state.auto_turn(k)  # origin sticks
+    state.end_turn(k)
     state.mark_busy(k)
-    assert state.auto_turn(k)  # busy newer than the peer turn
+    state.begin_peer_turn(k, msg, origin="user")  # user turn reads its inbox
+    assert not state.auto_turn(k)
+    state.end_turn(k)
+    state.begin_peer_turn(k, msg)
     with store.connect(store.db_path()) as conn:
-        conn.execute("UPDATE a2a_busy SET started_at = '2000-01-01T00:00:00.000000Z' WHERE session_key = ?", (k,))
-    assert not state.auto_turn(k)  # user started the turn, then the agent read its inbox
+        conn.execute("UPDATE a2a_peer_turn SET started_at = '2000-01-01T00:00:00.000000Z' WHERE session_key = ?", (k,))
+    state.begin_peer_turn(k, msg, origin="user")  # expired prior turn must not leak its origin
+    assert not state.auto_turn(k)
