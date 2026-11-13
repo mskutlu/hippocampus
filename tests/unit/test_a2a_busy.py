@@ -336,3 +336,17 @@ def test_refetched_stored_message_does_not_refire_callback(a2a_on, monkeypatch):
     tools._poll_once(box, ME, 0, 0)
     tools._poll_once(box, ME, 0, 0)
     assert got == [mid]
+
+
+def test_auto_turn(a2a_on):
+    from hippocampus.a2a import state, store
+
+    k = "cc-s1"
+    assert not state.auto_turn(k)  # no peer turn: human-driven
+    state.begin_peer_turn(k, {"msg_id": "m1", "thread_id": "t1", "from": PEER})
+    assert state.auto_turn(k)  # peer turn only
+    state.mark_busy(k)
+    assert state.auto_turn(k)  # busy newer than the peer turn
+    with store.connect(store.db_path()) as conn:
+        conn.execute("UPDATE a2a_busy SET started_at = '2000-01-01T00:00:00.000000Z' WHERE session_key = ?", (k,))
+    assert not state.auto_turn(k)  # user started the turn, then the agent read its inbox

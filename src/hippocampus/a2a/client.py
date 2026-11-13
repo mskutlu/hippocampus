@@ -53,10 +53,10 @@ class Mailbox:
         except sync_client.SyncError as exc:
             raise A2AError(502, str(exc)) from exc
 
-    def send(self, sender: str, to: str, content: str, thread_id: str | None = None, in_reply_to: str | None = None) -> dict:
+    def send(self, sender: str, to: str, content: str, thread_id: str | None = None, in_reply_to: str | None = None, auto: bool = False) -> dict:
         return self._call("POST", "/v1/a2a/send", {
             "from": sender, "to": to, "content": content, "thread_id": thread_id,
-            "in_reply_to": in_reply_to, "msg_id": str(ULID()),
+            "in_reply_to": in_reply_to, "msg_id": str(ULID()), **({"auto": True} if auto else {}),  # old hubs ignore it
         })
 
     def inbox(self, address: str, since: int = 0, wait: int = 0, responder: bool = False) -> dict:

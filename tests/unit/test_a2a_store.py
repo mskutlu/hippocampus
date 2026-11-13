@@ -155,3 +155,35 @@ def test_lease_migration_on_old_db(db):
     old.close()
     assert [m["msg_id"] for m in store.inbox(db, "claude-code@mac/cc-1")["messages"]] == ["o1"]
     assert store.inbox(db, "claude-code@mac/cc-2")["messages"] == []
+
+
+def _autocfg(monkeypatch, n):
+    from hippocampus import config
+
+    monkeypatch.setattr(config, "get_setting", lambda k: {"a2a_max_auto_run": n, "a2a_max_hops": 99, "a2a_max_thread_msgs": 99, "a2a_rate_per_min": 99}.get(k))
+
+
+def test_auto_run_limit_and_human_reset(db, monkeypatch):
+    _autocfg(monkeypatch, 3)
+    t = _send(db, "a0", auto=True)["thread_id"]
+    _send(db, "a1", thread_id=t, auto=True)
+    _send(db, "a2", thread_id=t, auto=True)
+    assert _err(db, "a3", thread_id=t, auto=True) == 409
+    _send(db, "h0", thread_id=t)  # human-steered: accepted, resets the run
+    _send(db, "a4", thread_id=t, auto=True)
+
+
+def test_missing_flag_is_not_automatic(db, monkeypatch):
+    _autocfg(monkeypatch, 2)
+    t = _send(db, "p0")["thread_id"]
+    for i in range(1, 8):
+        _send(db, f"p{i}", thread_id=t)
+
+
+def test_audit_send_reason_auto(db):
+    from hippocampus.a2a import store
+
+    _send(db, "x0", auto=True)
+    _send(db, "x1")
+    reasons = {e["msg_id"]: e["reason"] for e in store.audit(db) if e["event"] == "send"}
+    assert reasons == {"x0": "auto", "x1": None}

@@ -190,6 +190,7 @@ _DEFAULTS: dict[str, Any] = {
     "a2a_enabled": False,                  # agent-to-agent messaging (HIPPOCAMPUS_A2A_ENABLED overrides)
     "a2a_max_hops": 3,
     "a2a_max_thread_msgs": 20,
+    "a2a_max_auto_run": 15,                # consecutive automatic (not human-steered) messages per thread
     "a2a_rate_per_min": 30,
     "a2a_peer_turn_ttl_s": 900,            # a peer turn without a Stop hook expires after this
     "a2a_busy_idle_s": 180,                # push gating: a turn with no tool call for this long (Esc skips Stop) counts as idle

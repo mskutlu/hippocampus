@@ -646,6 +646,7 @@ poison memory. The design contains that; it does not remove the risk.
   |---------|---------|-------|
   | `a2a_max_hops` | 3 | reply depth per thread; the hub computes it, clients cannot reset it |
   | `a2a_max_thread_msgs` | 20 | messages per thread |
+  | `a2a_max_auto_run` | 15 | consecutive automatic replies per thread (turns no human started); a human-steered message resets the run |
   | `a2a_rate_per_min` | 30 | sends per sender device per minute |
   | `a2a_peer_turn_ttl_s` | 900 | peer turn expiry without a Stop |
   | `a2a_auto_answer` | true | standing authorization to `reply()` to own-device messages (not a hub limit; per device) |

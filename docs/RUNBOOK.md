@@ -388,7 +388,7 @@ hippo a2a audit --local            # this device: quarantine events
 ```
 
 `reject` rows carry the status and reason (`429 rate limit`, `409 max hops
-exceeded`, `409 thread message cap reached`, `413`, `423 a2a paused`).
+exceeded`, `409 thread message cap reached`, `409 auto-reply limit reached`, `413`, `423 a2a paused`).
 
 ### Review the memory quarantine
 

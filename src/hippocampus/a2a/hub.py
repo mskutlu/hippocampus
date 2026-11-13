@@ -20,6 +20,7 @@ def _send(db: Path, q: dict, body: dict) -> dict:
     return store.send(
         db, sender=str(body.get("from") or ""), to=str(body.get("to") or ""), content=str(body.get("content") or ""),
         msg_id=str(body.get("msg_id") or ""), thread_id=body.get("thread_id") or None, in_reply_to=body.get("in_reply_to") or None,
+        auto=body.get("auto") is True,
     )
 
 

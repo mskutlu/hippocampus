@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Current development version: `1.7.0.dev0`.
 
+### Added — A2A: auto-reply run limit
+
+- The hub rejects (`409 auto-reply limit reached`) a send once `a2a_max_auto_run`
+  (default 15) automatic messages in a row sit at the thread tail, so two agents
+  auto-answering each other stop. A send is automatic when its session is in a
+  peer turn that no user prompt started; a message from a human-steered turn is
+  never rejected and resets the run. Clients send `auto: true`; a missing flag
+  (older clients) counts as not automatic. Audit `send` rows carry `reason=auto`.
+
 ### Added — A2A: Esc-safe queueing and a per-device responder session
 
 - Busy gating for live push now also lapses after `a2a_busy_idle_s` (default

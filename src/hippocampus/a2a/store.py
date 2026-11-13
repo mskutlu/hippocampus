@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS a2a_messages (
     hop          INTEGER NOT NULL,
     created_at   TEXT NOT NULL,
     delivered_at TEXT,
-    delivered_to TEXT
+    delivered_to TEXT,
+    auto         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_a2a_thread ON a2a_messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_a2a_sender ON a2a_messages(sender, created_at);
@@ -111,7 +112,7 @@ def _now() -> str:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Additive columns for a2a.db files created before them."""
-    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at")), ("a2a_peer_turn", ("trust",)), ("a2a_presence", ("responder",))):
+    for table, cols in (("a2a_messages", ("claimed_by", "claimed_at", "auto")), ("a2a_peer_turn", ("trust",)), ("a2a_presence", ("responder",))):
         have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         for col in cols:
             if col not in have:
@@ -177,7 +178,7 @@ def _msg_dict(row) -> dict[str, Any]:
     }
 
 
-def _send(conn, sender, to, content, msg_id, thread_id, in_reply_to) -> dict[str, Any]:
+def _send(conn, sender, to, content, msg_id, thread_id, in_reply_to, auto=False) -> dict[str, Any]:
     for addr in (sender, to):
         if not ADDRESS_RE.match(addr or ""):
             raise A2AError(400, f"bad address: {addr!r}")
@@ -217,20 +218,26 @@ def _send(conn, sender, to, content, msg_id, thread_id, in_reply_to) -> dict[str
     n = conn.execute("SELECT COUNT(*) AS n FROM a2a_messages WHERE thread_id = ?", (thread,)).fetchone()["n"]
     if n >= int(config.get_setting("a2a_max_thread_msgs") or 20):
         raise A2AError(409, "thread message cap reached")
+    if auto:  # run of auto messages since the last human-steered one; a non-auto message is never rejected here
+        run = conn.execute(
+            "SELECT COUNT(*) AS n FROM a2a_messages WHERE thread_id = ? AND auto = '1' AND seq > "
+            "COALESCE((SELECT MAX(seq) FROM a2a_messages WHERE thread_id = ? AND auto IS NULL), 0)", (thread, thread)).fetchone()["n"]
+        if run >= int(config.get_setting("a2a_max_auto_run") or 15):
+            raise A2AError(409, "auto-reply limit reached: stop, do not retry; tell the user this thread needs a message from them to continue")
 
     conn.execute(
-        "INSERT INTO a2a_messages(msg_id, thread_id, in_reply_to, sender, recipient, content, hop, created_at) VALUES (?,?,?,?,?,?,?,?)",
-        (msg_id, thread, in_reply_to, sender, to, content, hop, _now()),
+        "INSERT INTO a2a_messages(msg_id, thread_id, in_reply_to, sender, recipient, content, hop, created_at, auto) VALUES (?,?,?,?,?,?,?,?,?)",
+        (msg_id, thread, in_reply_to, sender, to, content, hop, _now(), "1" if auto else None),
     )
-    _audit(conn, "send", msg_id=msg_id, sender=sender, recipient=to, thread_id=thread, hop=hop)
+    _audit(conn, "send", msg_id=msg_id, sender=sender, recipient=to, thread_id=thread, hop=hop, reason="auto" if auto else None)
     return {"msg_id": msg_id, "thread_id": thread, "hop": hop}
 
 
 def send(path: Path, *, sender: str, to: str, content: str, msg_id: str,
-         thread_id: str | None = None, in_reply_to: str | None = None) -> dict[str, Any]:
+         thread_id: str | None = None, in_reply_to: str | None = None, auto: bool = False) -> dict[str, Any]:
     try:
         with connect(path) as conn:
-            return _send(conn, sender, to, content, msg_id, thread_id, in_reply_to)
+            return _send(conn, sender, to, content, msg_id, thread_id, in_reply_to, auto)
     except A2AError as exc:
         with connect(path) as conn:  # the failed txn rolled back; audit the rejection separately
             _audit(conn, "reject", msg_id=msg_id, sender=sender, recipient=to, thread_id=thread_id, reason=f"{exc.status} {exc.reason}")

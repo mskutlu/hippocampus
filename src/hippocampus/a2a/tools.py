@@ -41,8 +41,8 @@ def _guard(fn: Callable[..., dict]) -> Callable[..., dict]:
 
 @_guard
 def send_message(to: str, content: str, thread_id: str | None = None) -> dict:
-    addr, _ = _me()
-    return a2a_client.Mailbox().send(addr, a2a_client.resolve_to(to), content, thread_id=thread_id)
+    addr, key = _me()
+    return a2a_client.Mailbox().send(addr, a2a_client.resolve_to(to), content, thread_id=thread_id, auto=state.auto_turn(key))
 
 
 @_guard
@@ -65,12 +65,12 @@ def inbox(limit: int = 20) -> dict:
 
 @_guard
 def reply(msg_id: str, content: str) -> dict:
-    addr, _ = _me()
+    addr, key = _me()
     orig = store.local_get(store.db_path(), addr, msg_id)
     if not orig:
         return {"error": f"unknown message {msg_id}"}
     # The peer turn stays active: the peer's text is still in context after replying.
-    return a2a_client.Mailbox().send(addr, orig["sender"], content, thread_id=orig["thread_id"], in_reply_to=msg_id)
+    return a2a_client.Mailbox().send(addr, orig["sender"], content, thread_id=orig["thread_id"], in_reply_to=msg_id, auto=state.auto_turn(key))
 
 
 @_guard

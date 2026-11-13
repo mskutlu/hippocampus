@@ -51,6 +51,18 @@ def test_send_inbox_reply_local(a2a_on):
     assert back[0]["content"] == "answer" and back[0]["from"] == me and back[0]["in_reply_to"] == mid
 
 
+def test_reply_flags_auto_only_in_peer_turn(a2a_on):
+    from hippocampus.a2a import state, store, tools
+
+    mid = (_deliver_to_me(), tools.inbox())[1]["messages"][0]["id"]
+    tools.reply(msg_id=mid, content="auto answer")
+    state.mark_busy("sess1")
+    state.end_peer_turn("sess1")
+    tools.reply(msg_id=mid, content="human answer")
+    rows = {e["reason"] for e in store.audit(store.db_path()) if e["event"] == "send" and e["sender"].endswith("sess1")}
+    assert rows == {"auto", None}
+
+
 def test_send_message_and_agents(a2a_on):
     from hippocampus.a2a import client, tools
 

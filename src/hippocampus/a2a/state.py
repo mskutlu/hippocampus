@@ -38,6 +38,16 @@ def active_peer_turn(session_key: str, path: Path | None = None) -> dict[str, An
     return dict(row) if row else None
 
 
+def auto_turn(session_key: str, path: Path | None = None) -> bool:
+    """A fresh peer turn that no user prompt started (a busy row older than the peer turn = human-driven). Ambiguous = automatic."""
+    with store.connect(path or store.db_path()) as conn:
+        turn = conn.execute("SELECT started_at FROM a2a_peer_turn WHERE session_key = ?", (session_key,)).fetchone()
+        if not turn or not a2a.turn_fresh(turn["started_at"]):
+            return False
+        busy = conn.execute("SELECT started_at FROM a2a_busy WHERE session_key = ?", (session_key,)).fetchone()
+    return not (busy and busy["started_at"] < turn["started_at"])
+
+
 def mark_busy(session_key: str, path: Path | None = None) -> None:
     """UserPromptSubmit: a user turn is running in this Claude Code session."""
     with store.connect(path or store.db_path()) as conn:
