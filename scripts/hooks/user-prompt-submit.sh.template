@@ -18,6 +18,9 @@
 
 set -uo pipefail
 
+# Kill switch: nested agent runs (hippo dream, TokenEconomizer side calls) must not touch memory.
+[[ "${HIPPOCAMPUS_DISABLE:-}" == 1 || "${TE_SIDECALL:-}" == 1 ]] && { echo "{}"; exit 0; }
+
 CLIENT="${1:-devin}"
 HIPPO_BIN="__HIPPO_BIN__"
 

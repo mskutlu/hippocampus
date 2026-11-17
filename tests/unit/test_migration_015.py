@@ -38,6 +38,6 @@ def test_migration_015_adds_columns_without_touching_values(hippo_env, tmp_path,
             "INSERT INTO fragment_outcomes(session_id, fragment_id, outcome, strength, source) "
             "VALUES ('sess_a', 'frag_a', 'helped', 'weak', 'settle')"
         )
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 15
+        assert conn.execute("SELECT 1 FROM schema_migrations WHERE version = 15").fetchone()
         conn.execute("DELETE FROM fragments WHERE id = 'frag_a'")
         assert conn.execute("SELECT COUNT(*) FROM fragment_outcomes").fetchone()[0] == 0

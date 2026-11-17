@@ -21,6 +21,10 @@ from hippocampus import config
 from hippocampus.storage import ledger as ledger_store, sessions
 
 
+# shortcut: only clients known to re-fire SessionStart/PostCompaction after compaction, add a client here once that is verified
+_RESEND_AFTER_COMPACTION = ("claude-code", "devin")
+
+
 def _fmt_time(iso_utc: str | None) -> str:
     if not iso_utc:
         return "--:--"
@@ -111,12 +115,15 @@ def _working_section(client: str, *, content_max: int = 220) -> list[str]:
     return out
 
 
-def _record_injection(client: str | None, fragment_ids: list[str]) -> None:
-    """Mark fragments as injected so a later recall does not boost them (V11)."""
-    if not client or not fragment_ids:
+def _record_injection(
+    client: str | None, fragment_ids: list[str], *, chars: int, restart: bool
+) -> None:
+    """Record the emission size and mark fragments as injected so a later recall does not boost them (V11)."""
+    if not client:
         return
     try:
         sid = sessions.current_session_id(client, open_if_missing=False)
+        sessions.record_emission(sid, chars, restart=restart)
     except Exception:
         return
     for fid in fragment_ids:
@@ -132,6 +139,7 @@ def _fragment_section(
     limit: int,
     extra_query_streams: list[str] | None = None,
     client: str | None = None,
+    skip_sent: bool = False,
 ) -> list[str]:
     """Render top-N long-term fragments (query-driven if query, else ranked).
 
@@ -187,7 +195,14 @@ def _fragment_section(
     # Preserve insertion order (explicit query first, then ledger streams,
     # then top-N) and respect the limit.
     fragments = list(fragments_by_id.values())[:limit]
-    _record_injection(client, [f.get("id") for f in fragments if f.get("id")])
+    if skip_sent and client:
+        try:
+            sent = sessions.sent_fragment_ids(sessions.current_session_id(client, open_if_missing=False))
+        except Exception:
+            sent = set()
+        fragments = [f for f in fragments if f.get("id") not in sent]
+        if not fragments:
+            return []
 
     header = (
         "## Top memories matching the latest prompt"
@@ -340,6 +355,7 @@ def render_context(
         extra_query_streams = _ledger_query_streams(client)
 
     sections: list[list[str]] = []
+    fragment_sec: list[str] | None = None
     if include_working:
         sec = _working_section(client)
         if sec:
@@ -348,9 +364,16 @@ def render_context(
     if sec:
         sections.append(sec)
     if include_fragments:
-        sec = _fragment_section(query, limit=fragment_limit, extra_query_streams=extra_query_streams, client=client)
+        sec = _fragment_section(
+            query,
+            limit=fragment_limit,
+            extra_query_streams=extra_query_streams,
+            client=client,
+            skip_sent=event_name == "UserPromptSubmit" and client in _RESEND_AFTER_COMPACTION,
+        )
         if sec:
             sections.append(sec)
+            fragment_sec = sec
 
     # Assemble respecting budget. Header always wins.
     out_lines: list[str] = list(header)
@@ -360,17 +383,28 @@ def render_context(
     if event_name in ("SessionStart", "PostCompaction") and a2a.auto_answer():
         out_lines.extend([a2a.AUTHORIZATION, ""])  # in case the rules file is stale
     out_lines.extend(_a2a_section(client))  # outside the budget so a fenced block is never cut
+    shown: list[str] = []  # fragment lines that reached the output whole
     for sec in sections:
         sec_text = "\n".join(sec) + "\n"
         if used + len(sec_text) > char_budget:
             remaining = char_budget - used
             if remaining > 80:  # only bother truncating if we have room for a useful prefix
-                out_lines.append(sec_text[: remaining - 1].rstrip())
+                cut = sec_text[: remaining - 1].rstrip()
+                out_lines.append(cut)
                 out_lines.append("…(truncated)")
+                if sec is fragment_sec:
+                    shown = cut.split("\n")[:-1]  # the last line may be cut mid-way
             break
         out_lines.extend(sec)
         used += len(sec_text)
+        if sec is fragment_sec:
+            shown = sec
 
     if len(out_lines) == len(header):
         out_lines.append("_(no working session and no fragments stored)_")
-    return "\n".join(out_lines).rstrip() + "\n"
+    text = "\n".join(out_lines).rstrip() + "\n"
+    ids = [m.group(1) for line in shown if (m := re.match(r"- `([^`]+)`", line))]
+    _record_injection(
+        client, ids, chars=len(text), restart=event_name in ("SessionStart", "PostCompaction")
+    )
+    return text

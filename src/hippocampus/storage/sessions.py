@@ -442,6 +442,62 @@ def injected_fragment_ids(session_id: str) -> set[str]:
     return {r["fragment_id"] for r in rows}
 
 
+def sent_fragment_ids(session_id: str) -> set[str]:
+    """Fragments the model has seen since the last SessionStart/PostCompaction emission.
+
+    Any access counts (a recall overwrites an earlier 'inject' marker, but its
+    output reached the model too); accesses before the marker were compacted away.
+    """
+    with get_ro_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT fragment_id FROM session_accesses
+            WHERE session_id = ?
+              AND accessed_at >= COALESCE((SELECT inject_epoch_at FROM sessions WHERE id = ?), '')
+            """,
+            (session_id, session_id),
+        ).fetchall()
+    return {r["fragment_id"] for r in rows}
+
+
+def record_emission(session_id: str, chars: int, *, restart: bool) -> None:
+    """Add one hook emission's size; `restart` also resets the 'already sent' marker."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE sessions SET
+                injected_chars = injected_chars + ?,
+                injected_emissions = injected_emissions + 1,
+                inject_epoch_at = CASE WHEN ? THEN ? ELSE inject_epoch_at END
+            WHERE id = ?
+            """,
+            (chars, int(restart), _now(), session_id),
+        )
+
+
+def injection_stats(limit: int = 10) -> dict:
+    """Cumulative hook injection cost: overall totals plus the latest sessions."""
+    with get_ro_conn() as conn:
+        total = conn.execute(
+            "SELECT COALESCE(SUM(injected_chars), 0) AS c, COALESCE(SUM(injected_emissions), 0) AS e FROM sessions"
+        ).fetchone()
+        rows = conn.execute(
+            """
+            SELECT id, injected_chars, injected_emissions FROM sessions
+            WHERE injected_emissions > 0 ORDER BY started_at DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {
+        "total_chars": total["c"],
+        "total_emissions": total["e"],
+        "sessions": [
+            {"session_id": r["id"], "chars": r["injected_chars"], "emissions": r["injected_emissions"]}
+            for r in rows
+        ],
+    }
+
+
 def auto_close_stale(hours: int | None = None) -> int:
     """Close any sessions older than `hours` that are still open. Returns count."""
     hrs = hours if hours is not None else config.SESSION_STALE_HOURS

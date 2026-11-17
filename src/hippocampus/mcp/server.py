@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,8 +23,10 @@ from mcp.server.stdio import stdio_server
 from mcp.types import InitializedNotification, Tool, ToolAnnotations
 
 from hippocampus import config
+from hippocampus import a2a as A2A_PKG
 from hippocampus.a2a import channel, pi as A2A_PI, tools as A2A
 from hippocampus.mcp import tools as T
+from hippocampus.wiki import storage as W_STORAGE
 
 # ---------------------------------------------------------------------------
 # Logging setup (stderr only)
@@ -561,9 +564,32 @@ TOOL_DISPATCH = {
 server = Server("hippocampus")
 
 
+A2A_TOOLS = {"send_message", "inbox", "reply", "list_agents"}
+# wiki_init stays listed: it is the bootstrap. wiki_enabled only gates context injection, so a wiki that exists keeps its tools.
+WIKI_TOOLS = {t.name for t in TOOL_SPECS if t.name.startswith("wiki_")} - {"wiki_init"}
+
+
+def _wiki_in_use() -> bool:
+    try:
+        return bool(W_STORAGE.list_projects(limit=1))
+    except sqlite3.Error:  # DB not initialised yet: no wiki
+        return False
+
+
+def _hidden_tools() -> set[str]:
+    """Evaluated per call: a2a and wiki_enabled can be switched while the server runs."""
+    hidden: set[str] = set()
+    if not A2A_PKG.enabled():
+        hidden |= A2A_TOOLS
+    if not config.get_setting("wiki_enabled") and not _wiki_in_use():
+        hidden |= WIKI_TOOLS
+    return hidden
+
+
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
-    return TOOL_SPECS
+    hidden = _hidden_tools()
+    return [t for t in TOOL_SPECS if t.name not in hidden]
 
 
 @server.call_tool()

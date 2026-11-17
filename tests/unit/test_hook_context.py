@@ -176,3 +176,100 @@ def test_render_context_includes_wiki_status_when_enabled(hippo_env, monkeypatch
     assert "LLM Wiki" in payload
     assert "not initialized" in payload
     assert "wiki_init" in payload
+
+
+def _setup_frags(n=3, client="claude-code"):
+    from hippocampus.mcp import tools as T
+
+    os.environ["HIPPOCAMPUS_CLIENT"] = client
+    T.log_progress(kind="goal", content="injection dedupe")
+    return [
+        T.remember(content=f"zebra fact {i} " + "x" * 50, summary=f"zebra fact {i}", scope="global")["fragment"]["id"]
+        for i in range(n)
+    ]
+
+
+def _render(event, client="claude-code", **kw):
+    from hippocampus.clients import hook_context
+
+    return hook_context.render_context(
+        client=client, event_name=event, extra_query_streams=[], include_working=False, **kw
+    )
+
+
+def _sid():
+    from hippocampus.storage import sessions
+
+    return sessions.current_session_id("claude-code", open_if_missing=False)
+
+
+def test_budget_dropped_fragments_not_recorded_as_injected(hippo_env):
+    from hippocampus.storage import sessions
+
+    _setup_frags()
+    payload = _render("SessionStart", char_budget=1)  # header alone blows the budget
+    assert "zebra fact" not in payload
+    assert sessions.injected_fragment_ids(_sid()) == set()
+
+
+def test_truncated_fragment_line_not_recorded(hippo_env):
+    from hippocampus.storage import sessions
+
+    ids = _setup_frags()
+    full = _render("SessionStart", char_budget=20000)
+    last = full.rstrip().splitlines()[-1]
+    with sessions.get_conn() as conn:
+        conn.execute("DELETE FROM session_accesses")
+    # budget lands inside the last fragment line
+    payload = _render("SessionStart", char_budget=len(full) - len(last) // 2 - 10)
+    assert "…(truncated)" in payload
+    assert last not in payload
+    assert sessions.injected_fragment_ids(_sid()) == {i for i in ids if f"`{i}`" not in last}
+
+
+def test_user_prompt_submit_omits_already_sent_fragments(hippo_env):
+    ids = _setup_frags()
+    first = _render("UserPromptSubmit")
+    assert all(i in first for i in ids)
+    second = _render("UserPromptSubmit")
+    assert not any(i in second for i in ids)
+    assert "## Top" not in second  # heading omitted with the fragments
+
+
+def test_session_start_resends_after_earlier_emissions(hippo_env):
+    ids = _setup_frags()
+    _render("SessionStart")
+    assert not any(i in _render("UserPromptSubmit") for i in ids)
+    again = _render("SessionStart")  # compact / clear / resume
+    assert all(i in again for i in ids)
+    assert not any(i in _render("UserPromptSubmit") for i in ids)
+    assert all(i in _render("PostCompaction") for i in ids)
+
+
+def test_injected_then_recalled_still_counts_as_sent(hippo_env):
+    from hippocampus.mcp import tools as T
+
+    ids = _setup_frags()
+    _render("SessionStart")
+    T.recall(query="zebra fact 0", limit=1)  # flips via inject -> recall, bumps accessed_at
+    assert not any(i in _render("UserPromptSubmit") for i in ids)
+
+
+def test_get_stats_reports_injection_cost(hippo_env):
+    from hippocampus.mcp import tools as T
+
+    _setup_frags()
+    a = _render("SessionStart")
+    b = _render("UserPromptSubmit")
+    inj = T.get_stats()["hook_injection"]
+    assert inj["total_chars"] == len(a) + len(b)
+    assert inj["total_emissions"] == 2
+    assert inj["sessions"] == [
+        {"session_id": _sid(), "chars": len(a) + len(b), "emissions": 2}
+    ]
+
+
+def test_user_prompt_submit_resends_for_client_not_known_to_refire(hippo_env):
+    ids = _setup_frags(client="cursor")
+    _render("UserPromptSubmit", client="cursor")
+    assert all(i in _render("UserPromptSubmit", client="cursor") for i in ids)

@@ -473,15 +473,29 @@ def review_reject_cmd(fragment_ids: tuple) -> None:
             skipped.append({"id": fid, "reason": "not a candidate"})
             continue
         feedback.log(fid, "archive", reason="review-reject")
+        F.record_rejection(frag)
         F.archive(fid)
         rejected.append(fid)
     click.echo(json.dumps({"rejected": rejected, "skipped": skipped, "missing": missing}, indent=2))
 
 
+@review_group.command("rejected")
+@click.option("--restore", metavar="HASH", default=None, help="Allow a rejected fact again (hash or unique prefix)")
+def review_rejected_cmd(restore: Optional[str]) -> None:
+    """List facts rejected by review (automatic producers skip them); --restore undoes one."""
+    _bootstrap()
+    from hippocampus.storage import fragments as F
+
+    if restore:
+        click.echo(json.dumps({"restored": F.clear_rejected(restore)}, indent=2))
+        return
+    click.echo(json.dumps(F.list_rejected(), indent=2, ensure_ascii=False))
+
+
 @cli.command("dream")
 @click.option("--limit", type=click.IntRange(min=1), default=20, show_default=True, help="Candidates per batch")
 def dream_cmd(limit: int) -> None:
-    """Print the dreaming agent prompt: claude -p "$(hippo dream)"."""
+    """Print the dreaming agent prompt: HIPPOCAMPUS_DISABLE=1 claude -p "$(hippo dream)"."""
     from hippocampus import dream
 
     click.echo(dream.render(limit))
@@ -1431,7 +1445,9 @@ def observe_cmd(source: Optional[str], dry_run: bool) -> None:
                 source_ref=source_ref,
                 pinned=False,
             )
-            frag = res.get("fragment") or {}
+            if not res.get("stored"):
+                continue
+            frag = res["fragment"]
             # Hard-set the lower initial confidence for auto-observed entries.
             obs_conf = float(config.get_setting("observe_default_confidence") or 0.30)
             try:
@@ -1722,6 +1738,8 @@ def a2a_quarantine_approve(qid: str) -> None:
     if row is None:
         raise click.ClickException(f"no quarantined item {qid}")
     out = tools.remember(**row["args"])
+    if not out.get("stored"):
+        raise click.ClickException(f"not stored ({out.get('reason')}); `hippo a2a quarantine reject {qid}` drops it")
     store.quarantine_resolve(store.db_path(), qid, "quarantine_approve", out["fragment"]["id"])
     _echo_json(out)
 

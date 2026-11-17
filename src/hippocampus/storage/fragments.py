@@ -7,6 +7,7 @@ tests can run without the vault directory.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,6 +47,37 @@ def _utc_now() -> str:
 PIPELINE_TAG_PREFIXES = ("log_progress_auto:", "log_progress:", "trigger:", "client:", "cluster:")
 
 AUTO_SOURCE_TYPES = ("session-summary", "auto-remembered", "dream")
+
+
+# Producers whose output must not come back after a human rejected it.
+REJECTABLE_SOURCE_TYPES = AUTO_SOURCE_TYPES + ("auto-observed",)
+
+
+def _fact_hash(content: str) -> str:
+    return hashlib.sha256(" ".join(content.lower().split()).encode()).hexdigest()
+
+
+def record_rejection(fragment: "Fragment") -> None:
+    """Remember a human-rejected fact so automatic producers skip it (see `create`)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO rejected_facts(project, fact_hash, summary, source_type) VALUES (?, ?, ?, ?)",
+            (fragment.project or "", _fact_hash(fragment.content), fragment.summary or "", fragment.source_type),
+        )
+
+
+def list_rejected() -> list[dict]:
+    with get_ro_conn() as conn:
+        rows = conn.execute("SELECT * FROM rejected_facts ORDER BY rejected_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def clear_rejected(hash_prefix: str) -> int:
+    """Remove tombstones whose hash starts with `hash_prefix`; returns how many."""
+    with get_conn() as conn:
+        return conn.execute(
+            "DELETE FROM rejected_facts WHERE fact_hash LIKE ? || '%'", (hash_prefix,)
+        ).rowcount
 
 
 def default_review_state(source_type: str | None, pinned: bool = False) -> str:
@@ -185,8 +217,11 @@ def create(
     source_ref: str | None = None,
     pinned: bool = False,
     project: str | None = None,
-) -> Fragment:
+) -> Fragment | None:
     """Insert a new fragment. Returns the hydrated Fragment.
+
+    Returns None when an automatic producer re-creates a fact a human rejected
+    in this project; a manual create of the same text clears that rejection.
 
     v1.6.0: incoming tags are funnelled through `tag_canonical.canonicalize`
     before insert. A new tag that has > tag_canonicalize_threshold string
@@ -208,6 +243,13 @@ def create(
             canonical_tags = list(tags)
 
     with get_conn() as conn:
+        key = (project or "", _fact_hash(content))
+        if source_type == "manual":
+            conn.execute("DELETE FROM rejected_facts WHERE project = ? AND fact_hash = ?", key)
+        elif source_type in REJECTABLE_SOURCE_TYPES and conn.execute(
+            "SELECT 1 FROM rejected_facts WHERE project = ? AND fact_hash = ?", key
+        ).fetchone():
+            return None
         conn.execute(
             """
             INSERT INTO fragments

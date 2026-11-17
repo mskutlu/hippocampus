@@ -112,6 +112,7 @@ Hippocampus implements both as an external memory substrate for AI assistants.
 - **Resolved from where you are.** `~/.hippocampus/projects.json` maps git
   remotes and path globs to a project name. `HIPPOCAMPUS_PROJECT` or a
   `.hippocampus-project` file in the repo overrides it.
+- **Hooks kill switch.** `HIPPOCAMPUS_DISABLE=1` (or `TE_SIDECALL=1`) makes every hook and the pi extension do nothing; the `hippo` CLI still works. The A2A guard stays active.
 - **Rules files stay global.** The always-on block carries only global
   fragments; project memory arrives through the lifecycle hooks, which know
   the working directory. See "Multiple devices and projects" below.
@@ -769,7 +770,7 @@ hippo review list --source-type session-summary
 hippo review approve frag_01H...
 hippo review reject  frag_01H...
 hippo remember -c "..." --project acme     # or --global; default is the session's project
-claude -p "$(hippo dream)"                  # extract atomic facts from raw candidates
+HIPPOCAMPUS_DISABLE=1 claude -p "$(hippo dream)"  # extract atomic facts from raw candidates
 hippo review list --source-type dream      # then approve / reject the dream facts
 
 # Working memory (hook-supported clients auto-log asks; Codex uses MCP calls directly)

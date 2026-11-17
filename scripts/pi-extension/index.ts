@@ -319,6 +319,9 @@ type ToolName = string;
 // Extension entry point
 // ---------------------------------------------------------------------------
 
+// Kill switch: nested agent runs (hippo dream, TokenEconomizer side calls) must not touch memory.
+const DISABLED = process.env.HIPPOCAMPUS_DISABLE === "1" || process.env.TE_SIDECALL === "1";
+
 export default function hippocampus(pi: ExtensionAPI) {
 	const mcp = new McpClient();
 
@@ -368,6 +371,7 @@ export default function hippocampus(pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.on("session_start", async () => {
+		if (DISABLED) return;
 		hippoExec(["session", "start", "--client", HIPPOCAMPUS_CLIENT]);
 		// The MCP child only starts its A2A poller after `initialized`, so bring it up now, not on first tool call.
 		mcp.ensureInitialized().catch(() => {});
@@ -407,6 +411,7 @@ export default function hippocampus(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event) => {
+		if (DISABLED) return undefined;
 		const promptRaw = (event as { prompt?: string }).prompt ?? "";
 		const prompt = promptRaw.trim();
 		if (prompt && !isPeerPrompt(prompt)) { // peer text is untrusted: never log/auto-remember it as a user ask

@@ -310,6 +310,8 @@ def remember(
         pinned=pinned,
         project=project,
     )
+    if frag is None:
+        return {"stored": False, "reason": "rejected_before"}
     # Try to embed synchronously; failure is non-fatal (fragment already
     # stored, can be re-embedded later via `hippo reindex`).
     try:
@@ -513,6 +515,7 @@ def get_stats() -> dict[str, Any]:
         "pinned_fragments": pinned,
         "average_confidence": round(avg_confidence, 6),
         "recent_feedback": recent_feedback,
+        "hook_injection": sessions.injection_stats(),
         "archive_threshold": config.ARCHIVE_THRESHOLD,
         "boost_delta": config.BOOST_DELTA,
         "decay_delta": config.DECAY_DELTA,
@@ -1024,7 +1027,7 @@ def end_progress(
             source_ref=sid,
             project=sessions.session_project(sid),
         )
-        stored_fragment = _as_dict(frag)
+        stored_fragment = _as_dict(frag) if frag else None
 
     handoff_path, _ = _write_session_handoff(
         sid, client_name, entries, status="completed", final_summary=summary
@@ -1081,12 +1084,13 @@ def auto_end_idle_sessions() -> dict[str, Any]:
                     source_ref=sid,
                     project=sessions.session_project(sid),
                 )
-                distilled_id = frag.id
-                try:
-                    from hippocampus.embeddings import search as semantic_search
-                    semantic_search.upsert_for_fragment(frag.id)
-                except Exception:
-                    pass
+                if frag is not None:
+                    distilled_id = frag.id
+                    try:
+                        from hippocampus.embeddings import search as semantic_search
+                        semantic_search.upsert_for_fragment(frag.id)
+                    except Exception:
+                        pass
             except Exception:
                 distilled_id = None
 
